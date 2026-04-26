@@ -882,6 +882,421 @@ The main intuition is simple:
 
 > Fuzzy logic lets machines reason with concepts that are not sharply defined, using rules that resemble human reasoning.
 
+---
+
+# Part II — Extended Topics
+
+The sections above sketch the core of fuzzy logic. The material that follows extends that sketch with topics directly relevant to the implementation tracks in this repository:
+
+- The **third major inference style** (Tsukamoto), which sits between Mamdani and Sugeno.
+- The **algebraic generalization** of fuzzy AND/OR (t-norm and t-conorm families), which lets the same FIS run with different operator choices.
+- **Foundational tools** — α-cuts, hedges, generalized modus ponens — that show up whenever you implement or debug a fuzzy system.
+- Additional **membership function shapes** and **defuzzification formulas** in their explicit form.
+- **Neuro-fuzzy systems** (ANFIS), which encode a fuzzy inference system as a differentiable computation graph and learn it from data.
+
+---
+
+## 25. Tsukamoto Fuzzy Inference
+
+Beyond Mamdani (Section 15) and Sugeno (Section 16), the **Tsukamoto** method is a third inference style. It is less common but useful when each output fuzzy set has a **monotonic** membership function.
+
+A Tsukamoto rule has the same look as a Mamdani rule:
+
+```text
+IF service is excellent THEN tip is high
+```
+
+The constraint is that the consequent fuzzy set "tip is high" must have a *monotonic* MF — for example, a sigmoid that rises from 0 to 1.
+
+### 25.1 Inference Mechanism
+
+The key idea: because the consequent MF is monotonic, the firing strength of a rule directly maps to a single crisp output. If rule `i` fires with strength `wi` and the consequent MF is `μi`, the rule produces:
+
+```text
+zi = μi^{-1}(wi)
+```
+
+The system output is then a weighted average:
+
+```text
+output = Σ(wi · zi) / Σ(wi)
+```
+
+This sidesteps both Mamdani's aggregation+defuzzification and Sugeno's explicit functional consequent.
+
+### 25.2 Comparison
+
+| Aspect             | Mamdani              | Sugeno                  | Tsukamoto                  |
+| ------------------ | -------------------- | ----------------------- | -------------------------- |
+| Consequent         | Fuzzy set            | Constant or function    | Monotonic fuzzy set        |
+| Output computation | Aggregate + defuzz   | Weighted average        | Weighted average via μ⁻¹   |
+| Interpretability   | High                 | Medium                  | Medium                     |
+| Computational cost | High                 | Low                     | Low                        |
+| Restriction        | None                 | Crisp consequent form   | Monotonic consequent MF    |
+
+**When to use**: when inputs are linguistic but the monotone-consequent constraint is acceptable, and a balance between Mamdani's interpretability and Sugeno's efficiency is desired.
+
+**Limitation**: monotonic MFs are restrictive. If the natural output concept is non-monotonic (e.g., "comfortable temperature" peaks in the middle), Tsukamoto cannot represent it directly.
+
+---
+
+## 26. Properties of Fuzzy Sets and α-Cuts
+
+Beyond the **support**, **core**, and **boundary** introduced in Section 3, several additional properties are useful in design and analysis.
+
+### 26.1 Height
+
+The **height** of a fuzzy set `A` is the supremum of its membership function:
+
+```text
+height(A) = sup { μA(x) | x ∈ X }
+```
+
+### 26.2 Normality
+
+A fuzzy set is **normal** if its height is 1 — at least one element has full membership:
+
+```text
+A is normal ⇔ ∃ x ∈ X such that μA(x) = 1
+```
+
+Non-normal sets can be normalized by dividing by the height.
+
+### 26.3 Convexity
+
+A fuzzy set on the real line is **convex** if its membership function is unimodal:
+
+```text
+A convex ⇔ for all x1 < x2 < x3, μA(x2) ≥ min(μA(x1), μA(x3))
+```
+
+Triangular, trapezoidal, Gaussian, and bell-shaped MFs are convex; bimodal MFs are not.
+
+### 26.4 Cardinality
+
+The **scalar cardinality** of a fuzzy set is the sum (or integral) of memberships:
+
+```text
+|A| = Σ_x μA(x)        (discrete universe)
+|A| = ∫ μA(x) dx       (continuous universe)
+```
+
+### 26.5 α-Cuts
+
+An **α-cut** of `A` at level `α ∈ [0, 1]` is the crisp set of elements with membership at least `α`:
+
+```text
+A_α = { x ∈ X | μA(x) ≥ α }
+```
+
+The **strict α-cut** uses strict inequality:
+
+```text
+A_α^+ = { x ∈ X | μA(x) > α }
+```
+
+α-cuts are the bridge between fuzzy and crisp operations: many fuzzy algorithms can be expressed as families of crisp operations, one per α level, then combined.
+
+**Properties**:
+
+- `A_0` is the universe (or its closure).
+- `A_1` is the core of `A`.
+- α-cuts are nested: if `α1 ≤ α2` then `A_{α1} ⊇ A_{α2}`.
+
+**Practical use**: discretization grids in Mamdani aggregation can be replaced by a finite ladder of α-cuts, often more numerically stable than fixed grids.
+
+---
+
+## 27. t-norm and t-conorm Families
+
+Section 8 introduced AND/OR/NOT using `min`, `max`, and `1 - x`. These are one specific choice — they belong to broader algebraic families. Real fuzzy systems often need to swap the family without rewriting their inference logic.
+
+### 27.1 t-norm Axioms
+
+A function `T : [0,1] × [0,1] → [0,1]` is a **t-norm** if it satisfies:
+
+- **Commutativity**: `T(a, b) = T(b, a)`
+- **Associativity**: `T(T(a, b), c) = T(a, T(b, c))`
+- **Monotonicity**: if `a ≤ a'` then `T(a, b) ≤ T(a', b)`
+- **Boundary**: `T(a, 1) = a`
+
+t-norms generalize fuzzy AND.
+
+### 27.2 t-conorm Axioms
+
+A **t-conorm** (or s-norm) `S` satisfies the same first three axioms with the boundary condition `S(a, 0) = a`. t-conorms generalize fuzzy OR.
+
+### 27.3 Common Families
+
+| Family                  | t-norm `T(a, b)`             | t-conorm `S(a, b)`               |
+| ----------------------- | ----------------------------- | --------------------------------- |
+| Min/max (Zadeh, Gödel)  | `min(a, b)`                   | `max(a, b)`                       |
+| Product (probabilistic) | `a · b`                       | `a + b - a·b`                     |
+| Łukasiewicz             | `max(a + b - 1, 0)`           | `min(a + b, 1)`                   |
+| Drastic                 | `a if b=1, b if a=1, else 0`  | `a if b=0, b if a=0, else 1`      |
+| Hamacher (γ ≥ 0)        | `a·b / (γ + (1-γ)(a+b - a·b))` | (De Morgan dual)                |
+| Yager (p > 0)           | `1 - min(1, ((1-a)^p + (1-b)^p)^{1/p})` | `min(1, (a^p + b^p)^{1/p})` |
+
+### 27.4 De Morgan Duality
+
+For any t-norm `T` and complement `c(x) = 1 - x`, the **De Morgan dual** t-conorm is:
+
+```text
+S(a, b) = 1 - T(1 - a, 1 - b)
+```
+
+`min/max` and `1 - x` form a De Morgan triple, as do `product` and `probabilistic-sum`.
+
+### 27.5 Choice of Family
+
+- **Min/max** — classical, idempotent, easy to interpret, but not differentiable at the kink.
+- **Product** — smooth and differentiable; multiplicative structure is natural for probabilistic interpretations and for gradient-based learning. ANFIS typically uses product for rule firing.
+- **Łukasiewicz** — bounded; captures hard saturation. Useful when crossing thresholds matters.
+- **Yager / Hamacher** — parametric families that interpolate between extremes; useful for tuning.
+
+**Practical default**: `min/max` for human-readable Mamdani; `product` for ANFIS and any neuro-fuzzy system where gradients flow through the operator.
+
+---
+
+## 28. Linguistic Hedges
+
+A **hedge** is a modifier applied to a linguistic term to produce a new fuzzy set, encoding adverbs like *very*, *somewhat*, *more or less*.
+
+A common formulation defines each hedge as a transformation of the membership function:
+
+```text
+very A         → μA(x)^2
+somewhat A     → μA(x)^{1/2}
+extremely A    → μA(x)^3
+more or less A → μA(x)^{1/2}
+not A          → 1 - μA(x)
+```
+
+Example: if `μ_tall(1.85) = 0.7`, then:
+
+```text
+μ_{very tall}(1.85)     = 0.7^2     = 0.49
+μ_{somewhat tall}(1.85) = 0.7^{1/2} ≈ 0.84
+```
+
+Hedges let a small base vocabulary cover a much richer set of linguistic terms without authoring new MFs by hand. They compose: `very somewhat tall` is well-defined, even if the linguistic interpretation needs care.
+
+---
+
+## 29. Generalized Modus Ponens
+
+In classical logic, **modus ponens** is:
+
+```text
+A → B
+A
+∴ B
+```
+
+The **generalized modus ponens** (GMP) is its fuzzy extension. Given:
+
+```text
+Rule:   IF X is A THEN Y is B
+Fact:   X is A'
+```
+
+where `A'` is *similar to but not identical to* `A`, GMP infers:
+
+```text
+Y is B'
+```
+
+where `B'` depends on a fuzzy implication operator and a composition rule. The standard formulation uses **max-min composition**:
+
+```text
+μ_{B'}(y) = sup_x  min( μ_{A'}(x),  μ_{A → B}(x, y) )
+```
+
+Different choices of fuzzy implication operator yield different inference behaviors:
+
+| Implication      | `μ_{A → B}(x, y)`                      | Notes                              |
+| ---------------- | --------------------------------------- | ---------------------------------- |
+| Mamdani          | `min(μA(x), μB(y))`                     | Used in Mamdani FIS                |
+| Łukasiewicz      | `min(1, 1 - μA(x) + μB(y))`             | Bounded, residuated                |
+| Gödel            | `1 if μA(x) ≤ μB(y), else μB(y)`        | Discontinuous                      |
+| Goguen (product) | `1 if μA(x) ≤ μB(y), else μB(y)/μA(x)`  | Smooth, used in some Sugeno models |
+
+Mamdani-style FIS implements the first row at scale; classical fuzzy inference theory often uses the others. The choice affects how a partially-matched antecedent propagates uncertainty into the consequent.
+
+---
+
+## 30. Additional Membership Function Shapes
+
+Section 4 covered triangular, trapezoidal, and Gaussian MFs. Other commonly used shapes:
+
+### 30.1 Generalized Bell
+
+```text
+μ(x; a, b, c) = 1 / ( 1 + |(x - c) / a|^{2b} )
+```
+
+Smooth, symmetric, and parametric (`a` controls width, `b` controls slope sharpness, `c` is the center). Used heavily in ANFIS for its smooth gradients.
+
+### 30.2 Sigmoid
+
+```text
+μ(x; a, c) = 1 / ( 1 + exp(-a (x - c)) )
+```
+
+Monotonic — useful for Tsukamoto consequents and for "open-ended" linguistic terms like *high* or *large* that saturate above some threshold.
+
+### 30.3 Singleton
+
+A degenerate fuzzy set with membership 1 at a single point and 0 elsewhere:
+
+```text
+μ(x; c) = 1 if x = c, else 0
+```
+
+Used in zero-order Sugeno consequents.
+
+### 30.4 Choice for Learning Systems
+
+For ANFIS and other gradient-trained neuro-fuzzy models, prefer **Gaussian** or **bell** shapes — both are smooth and have well-conditioned gradients. Triangular and trapezoidal MFs have non-differentiable kinks that complicate gradient-based optimization (subgradients work but are noisier).
+
+---
+
+## 31. Defuzzification Methods (Formal)
+
+Section 14 introduced defuzzification conceptually. For an aggregated output fuzzy set with membership `μ(y)` over a universe `Y`, the standard methods have explicit formulas.
+
+### 31.1 Centroid (Center of Gravity)
+
+```text
+y* = ∫ y · μ(y) dy / ∫ μ(y) dy
+```
+
+Smooth; considers the entire distribution. Standard default.
+
+### 31.2 Bisector
+
+The value `y*` such that the area under `μ` is split into equal halves:
+
+```text
+∫_{y_min}^{y*} μ(y) dy = ∫_{y*}^{y_max} μ(y) dy
+```
+
+Robust to outliers in the tails of `μ`.
+
+### 31.3 Mean of Maximum (MoM)
+
+```text
+y* = mean { y ∈ Y | μ(y) = max_y μ(y) }
+```
+
+### 31.4 Smallest of Maximum (SoM) and Largest of Maximum (LoM)
+
+```text
+y*_SoM = min { y ∈ Y | μ(y) = max_y μ(y) }
+y*_LoM = max { y ∈ Y | μ(y) = max_y μ(y) }
+```
+
+Useful when the application has a directional bias — e.g., a conservative controller picks SoM, an aggressive one picks LoM.
+
+### 31.5 Numerical Notes
+
+- Centroid and bisector require a **discretization grid** over `Y`. Coarse grids give visibly different answers; treat the grid as a first-class config argument, never hardcoded.
+- On a degenerate aggregated output (`μ ≡ 0`), centroid is undefined. Convention used in this repo: return the universe midpoint and emit a warning.
+- For triangular and trapezoidal aggregated shapes, closed-form centroid expressions exist and avoid grid discretization entirely.
+
+---
+
+## 32. Neuro-fuzzy Systems and ANFIS
+
+A natural question: can a fuzzy system be **learned from data** rather than authored from expert knowledge? Neuro-fuzzy systems answer yes, by encoding a fuzzy inference system as a differentiable computation graph and training its parameters with gradient descent.
+
+### 32.1 ANFIS Architecture
+
+**ANFIS** (Adaptive Neuro-Fuzzy Inference System, Jang 1993) encodes a first-order **Sugeno** FIS as a 5-layer feed-forward network:
+
+```text
+Layer 1  Fuzzification     input x_i passes through learnable MFs (Gaussian or bell)
+Layer 2  Rule firing       t-norm (typically product) of antecedent memberships → w_i
+Layer 3  Normalization     w̄_i = w_i / Σ_j w_j
+Layer 4  Consequent        f_i = p_i · x + q_i  (linear in inputs)
+Layer 5  Output            y = Σ_i  w̄_i · f_i
+```
+
+All operations are differentiable. The MF parameters (Layer 1) and consequent parameters (Layer 4) are learned. Layers 2, 3, 5 have no learnable parameters.
+
+### 32.2 Hybrid vs. End-to-End Training
+
+The original ANFIS uses a **hybrid** scheme:
+
+- **Forward pass**: with current MF parameters fixed, the consequent parameters are solved by **least squares** (the output is linear in them).
+- **Backward pass**: with consequents fixed, the MF parameters are updated by gradient descent.
+
+Modern PyTorch implementations often use **end-to-end SGD** for simplicity, accepting some loss of convergence speed in exchange for flexibility (custom losses, regularization, deep stacking, batch training).
+
+### 32.3 Numerical Pitfalls
+
+- **Positive parameters** (Gaussian widths, bell `a`): parameterize via `softplus(raw) + ε`. Never `abs()` or `clamp(min=0)` — both break gradients near zero.
+- **Normalization**: Layer 3's division should use `softmax` or a `logsumexp`-stabilized form. Raw `exp / sum(exp)` underflows when firing strengths are tiny.
+- **Half-precision** (fp16/bf16): avoid in the firing-strength normalization layer; MFs are tail-sensitive and the normalization can amplify rounding noise.
+
+### 32.4 Trade-offs vs. Classical FIS
+
+| Aspect           | Classical FIS              | ANFIS                                 |
+| ---------------- | -------------------------- | ------------------------------------- |
+| Knowledge source | Expert                     | Data                                  |
+| MFs              | Hand-designed              | Learned                               |
+| Rules            | Hand-written               | Implicit in network structure         |
+| Interpretability | High                       | Medium (rules visible, params opaque) |
+| Data requirement | None                       | Substantial                           |
+| Generalization   | Bounded by expert quality  | Bounded by data quality               |
+
+ANFIS sits between a black-box neural network (no interpretability, all data-driven) and a hand-authored FIS (full interpretability, no data). The fuzzy structure provides a useful inductive bias for low-data regimes.
+
+### 32.5 Beyond ANFIS
+
+Other neuro-fuzzy variants worth knowing:
+
+- **CANFIS** — extends ANFIS to multiple correlated outputs.
+- **TSK fuzzy networks** — generalize ANFIS to broader Takagi–Sugeno–Kang structures.
+- **Type-2 ANFIS** — uses interval type-2 MFs to model uncertainty in the MFs themselves.
+- **Deep neuro-fuzzy** — stacks multiple fuzzy layers, sometimes with attention or convolutional structure.
+
+---
+
+## 33. Brief Notes on Adjacent Areas
+
+### 33.1 Type-2 Fuzzy Sets
+
+In a **type-2 fuzzy set**, the membership value at each point is itself a fuzzy set (or, in *interval type-2*, an interval). This models uncertainty in the membership function — useful when expert MFs disagree, or when noisy data makes the boundary location uncertain. Type-2 systems are computationally heavier and require a *type-reduction* step before defuzzification.
+
+### 33.2 Fuzzy Clustering
+
+**Fuzzy c-means (FCM)** generalizes k-means: each data point belongs to every cluster with a degree of membership rather than a hard assignment. The objective is:
+
+```text
+J = Σ_i Σ_j  μ_{ij}^m · ||x_i - c_j||^2
+```
+
+with `m > 1` controlling fuzziness. FCM is widely used to *initialize* fuzzy systems by deriving rule antecedents from cluster centroids.
+
+### 33.3 Fuzzy Logic vs. Probability — Revisited
+
+Section 20 distinguished the two by interpretation. A finer point: their *operations* can numerically coincide. Fuzzy AND under the product t-norm gives `a · b`, which equals probabilistic AND under independence. But the *meaning* differs — one is a graded membership, the other a frequency or belief about a binary event. Choosing the same numerical operator does not collapse the conceptual distinction; the consumer of the value still has to know which interpretation applies.
+
+---
+
+## 34. Notation and Conventions
+
+Throughout this document:
+
+- `μA(x)` is the membership function of fuzzy set `A` evaluated at `x`.
+- `X` is the universe of discourse (domain of inputs); `Y` is the output universe.
+- `T` denotes a t-norm; `S` a t-conorm; `c` a complement.
+- `A_α` denotes the α-cut of `A` (Section 26.5), not matrix indexing.
+- "The slides" refers to the user's PCS5708 lecture material.
+
+---
+
 [1]: https://plato.stanford.edu/entries/logic-fuzzy/ "
 Fuzzy Logic (Stanford Encyclopedia of Philosophy)
 "
