@@ -1,57 +1,59 @@
-# Relatório — Controle de velocidade de motor DC com lógica fuzzy preditiva
+# Report — DC motor speed control with predictive fuzzy logic
 
-**PCS5708 — Exercício 1 — abordagem Mamdani**
+**PCS5708 — Exercise 1 — Mamdani approach**
 
-## 1. Especificação do problema
+## 1. Problem specification
 
-Projetar um sistema de controle de velocidade rotacional para um motor DC usando lógica fuzzy preditiva. Restrições do problema:
+Design a rotational speed control system for a DC motor using predictive fuzzy logic. Constraints:
 
 - Motor: $\omega \in [0, 1000]$ rpm
-- Fonte DC: $V \in [0, 100]$ V
-- Taxa máxima de aceleração ou frenagem: $\pm 1$ rpm/s
-- Ação de controle: incremento ou decremento da fonte por $\pm 1$ V
+- DC source: $V \in [0, 100]$ V
+- Maximum acceleration / braking rate: $\pm 1$ rpm/s
+- Control action: increment or decrement the supply voltage by $\pm 1$ V
 
-A relação física básica: para acelerar o motor, aumenta-se a tensão; para frear, reduz-se a tensão. Esta heurística é codificada na base de regras.
+Basic physical relationship: to accelerate the motor, raise the voltage; to brake, lower it. This heuristic is encoded in the rule base.
 
-## 2. Variáveis e dimensionamento
+## 2. Variables and dimensioning
 
-| Tipo    | Variável     | Domínio        | Termos linguísticos        |
-| ------- | ------------ | -------------- | -------------------------- |
-| Entrada | Velocidade   | [0, 1000] rpm  | Baixa, Média, Alta         |
-| Entrada | Alimentação  | [0, 100] V     | Baixa, Média, Alta         |
-| Saída   | Aceleração   | [-1, +1] rpm/s | Freio, Neutro, Aceleração  |
+| Type   | Variable     | Domain         | Linguistic terms          |
+| ------ | ------------ | -------------- | ------------------------- |
+| Input  | Velocidade   | [0, 1000] rpm  | Baixa, Média, Alta        |
+| Input  | Alimentação  | [0, 100] V     | Baixa, Média, Alta        |
+| Output | Aceleração   | [-1, +1] rpm/s | Freio, Neutro, Aceleração |
 
-A *variável de controle* — relação entre aceleração (saída) e alimentação — é interpretada como: a saída fuzzy de aceleração (em rpm/s) é também a taxa de variação da tensão (V/s). Em uma decisão "Acelerar" plena (saída = +1), a fonte aumenta 1 V/s e o motor responde acelerando 1 rpm/s.
+The *control variable* — the relationship between acceleration (output) and supply voltage — is interpreted as follows: the fuzzy acceleration output (in rpm/s) is also the rate of change of the supply voltage (V/s). At a full *Acelerar* decision (output = +1), the source rises 1 V/s and the motor responds by accelerating at 1 rpm/s.
 
-## 3. Funções de pertinência
+Linguistic-term glossary: Baixa = Low, Média = Medium, Alta = High; Freio = Brake, Neutro = Neutral, Aceleração = Accelerate.
 
-As três variáveis usam triangulares e ombros (shoulders) lineares, conforme as transparências da disciplina.
+## 3. Membership functions
+
+The three variables use linear triangulars and shoulders, following the course slides.
 
 ### 3.1 Velocidade
 
-- **Baixa**: ombro decrescente — $\mu = 1$ em $\omega = 0$, $\mu = 0$ em $\omega = 500$.
-- **Média**: triangular com pico em $\omega = 500$, base em $0$ e $1000$.
-- **Alta**: ombro crescente — $\mu = 0$ em $\omega = 500$, $\mu = 1$ em $\omega = 1000$.
+- **Baixa**: descending shoulder — $\mu = 1$ at $\omega = 0$, $\mu = 0$ at $\omega = 500$.
+- **Média**: triangular, peak at $\omega = 500$, base at $0$ and $1000$.
+- **Alta**: rising shoulder — $\mu = 0$ at $\omega = 500$, $\mu = 1$ at $\omega = 1000$.
 
 ![Velocidade](figures/mf_velocidade.png)
 
 ### 3.2 Alimentação
 
-Análoga, mapeada para o intervalo $[0, 100]$ V.
+Analogous, mapped to the interval $[0, 100]$ V.
 
 ![Alimentação](figures/mf_alimentacao.png)
 
-### 3.3 Aceleração (saída)
+### 3.3 Aceleração (output)
 
-- **Freio**: ombro decrescente — $\mu = 1$ em $-1$ rpm/s, $\mu = 0$ em $0$.
-- **Neutro**: triangular com pico em $0$, base em $-1$ e $+1$.
-- **Aceleração**: ombro crescente — $\mu = 0$ em $0$, $\mu = 1$ em $+1$ rpm/s.
+- **Freio**: descending shoulder — $\mu = 1$ at $-1$ rpm/s, $\mu = 0$ at $0$.
+- **Neutro**: triangular, peak at $0$, base at $-1$ and $+1$.
+- **Aceleração**: rising shoulder — $\mu = 0$ at $0$, $\mu = 1$ at $+1$ rpm/s.
 
 ![Aceleração](figures/mf_aceleracao.png)
 
-## 4. Base de regras
+## 4. Rule base
 
-São nove regras (3 × 3) cobrindo todas as combinações dos termos das duas entradas:
+Nine rules (3 × 3) covering all combinations of the two input terms:
 
 | Velocidade \ Alimentação | Baixa      | Média      | Alta      |
 | ------------------------ | ---------- | ---------- | --------- |
@@ -59,25 +61,25 @@ São nove regras (3 × 3) cobrindo todas as combinações dos termos das duas en
 | **Média**                | Aceleração | Neutro     | Freio     |
 | **Alta**                 | Neutro     | Freio      | Freio     |
 
-A base codifica uma heurística *preditiva*:
+The base encodes a *predictive* heuristic:
 
-- **Velocidade Baixa & Alimentação Baixa → Acelerar**: motor parado, tensão baixa — aumentar tensão.
-- **Velocidade Baixa & Alimentação Alta → Neutro**: motor lento mas tensão alta — o próprio motor irá acelerar pela tensão; não adicionar mais.
-- **Velocidade Alta & Alimentação Baixa → Neutro**: motor rápido mas tensão baixa — o motor já irá desacelerar; não tirar mais tensão.
-- **Velocidade Alta & Alimentação Alta → Frear**: motor rápido e tensão alta — reduzir.
+- **Velocidade Baixa & Alimentação Baixa → Acelerar**: motor stopped, voltage low — raise voltage.
+- **Velocidade Baixa & Alimentação Alta → Neutro**: motor slow but voltage high — the motor is about to accelerate from the voltage alone; do not push more.
+- **Velocidade Alta & Alimentação Baixa → Neutro**: motor fast but voltage low — the motor will already decelerate; do not lower the voltage further.
+- **Velocidade Alta & Alimentação Alta → Frear**: motor too fast and voltage high — reduce.
 
-O caráter *preditivo* está nas células anti-diagonais ($\text{Baixa} \times \text{Alta}$ e $\text{Alta} \times \text{Baixa}$): em vez de reagir somente ao estado atual, o controlador antecipa que a dinâmica natural do motor já está a corrigir o estado.
+The *predictive* character lies in the anti-diagonal cells (Baixa × Alta and Alta × Baixa): instead of reacting only to the current state, the controller anticipates that the natural dynamics of the motor are already correcting it.
 
-## 5. Inferência
+## 5. Inference
 
-Mamdani clássico:
+Classical Mamdani:
 
-- t-norma para AND (entre antecedentes): `min`.
-- Implicação de Mamdani: recorte (clipping) da função de pertinência do consequente pela força da regra.
-- Agregação inter-regras: `max`.
-- Defuzzificação: centróide.
+- t-norm for AND (between antecedents): `min`.
+- Mamdani implication: clipping of the consequent membership function by the rule strength.
+- Inter-rule aggregation: `max`.
+- Defuzzification: centroid.
 
-Para cada regra $i$:
+For each rule $i$:
 
 $$
 w_i = \min_{v \in \mathrm{antec}_i} \mu_{A_v}(x_v),
@@ -85,36 +87,36 @@ w_i = \min_{v \in \mathrm{antec}_i} \mu_{A_v}(x_v),
 \mu_{B_i'}(y) = \min(w_i,\ \mu_{B_i}(y))
 $$
 
-Saída agregada:
+Aggregated output:
 
 $$
 \mu_{B'}(y) = \max_i \mu_{B_i'}(y)
 $$
 
-Saída crisp por centróide:
+Crisp output by centroid:
 
 $$
 y^* = \frac{\sum_y y \cdot \mu_{B'}(y)}{\sum_y \mu_{B'}(y)}
 $$
 
-A defuzzificação usa um grid discreto sobre $[-1, +1]$ com 401 pontos.
+Defuzzification uses a discrete grid of 401 points over $[-1, +1]$.
 
-## 6. Superfície de controle
+## 6. Control surface
 
-Avaliando o FIS sobre toda a grade $[0, 1000] \times [0, 100]$:
+Evaluating the FIS over the full grid $[0, 1000] \times [0, 100]$:
 
-![Superfície de controle](figures/control_surface.png)
+![Control surface](figures/control_surface.png)
 
-Observações:
+Observations:
 
-- **Diagonal $\omega \approx 10 V$**: aceleração próxima de zero — equilíbrio implícito.
-- **Quadrante "$\omega$ baixo, $V$ baixo"**: aceleração positiva (acelerar).
-- **Quadrante "$\omega$ alto, $V$ alto"**: aceleração negativa (frear).
-- A superfície é *suave* (sem descontinuidades) graças à sobreposição dos termos linguísticos e ao centróide.
+- **Diagonal $\omega \approx 10 V$**: acceleration close to zero — implicit equilibrium.
+- **"$\omega$ low, $V$ low" quadrant**: positive acceleration (accelerate).
+- **"$\omega$ high, $V$ high" quadrant**: negative acceleration (brake).
+- The surface is *smooth* (no discontinuities) thanks to the linguistic-term overlap and the centroid defuzzification.
 
-## 7. Avaliações pontuais
+## 7. Pointwise evaluations
 
-Saída do controlador em pontos representativos:
+Controller output at representative points:
 
 | Velocidade (rpm) | Alimentação (V) | Aceleração (rpm/s) |
 | ---------------: | --------------: | -----------------: |
@@ -125,46 +127,46 @@ Saída do controlador em pontos representativos:
 |              900 |              90 |             -0.347 |
 |             1000 |             100 |             -0.668 |
 
-A simetria em torno do ponto $(500, 50)$ reflete a simetria da base de regras.
+The symmetry around $(500, 50)$ reflects the symmetry of the rule base.
 
-## 8. Modelo da planta
+## 8. Plant model
 
-Modelo simplificado de motor DC para a simulação:
+Simplified DC motor model used for the simulation:
 
-- Velocidade de equilíbrio em estado estacionário: $\omega_{ss}(V) = 10\,V$.
-- Resposta natural: $\dot\omega = \mathrm{clip}(\omega_{ss}(V) - \omega,\, -1,\, +1)$ rpm/s.
-- Atuador: $\dot V = \mathrm{acc}_{\mathrm{FIS}}(\omega, V)$ V/s, com saturação em $[0, 100]$ V.
+- Steady-state velocity: $\omega_{ss}(V) = 10\,V$.
+- Natural response: $\dot\omega = \mathrm{clip}(\omega_{ss}(V) - \omega,\, -1,\, +1)$ rpm/s.
+- Actuator: $\dot V = \mathrm{acc}_{\mathrm{FIS}}(\omega, V)$ V/s, saturated at $[0, 100]$ V.
 
-A taxa máxima de aceleração da planta ($1$ rpm/s) é o gargalo principal — para o motor cobrir a metade de seu range ($500$ rpm), são necessários ao menos $500$ s.
+The plant's max acceleration ($1$ rpm/s) is the main bottleneck — to traverse half its range ($500$ rpm), at least $500$ s are required.
 
-## 9. Simulação em malha fechada
+## 9. Closed-loop simulation
 
-Foram simuladas duas condições iniciais durante $800$ s:
+Two initial conditions were simulated for $800$ s:
 
-1. Motor em repouso: $\omega(0) = 0$, $V(0) = 0$.
-2. Motor saturado: $\omega(0) = 1000$, $V(0) = 100$.
+1. Motor at rest: $\omega(0) = 0$, $V(0) = 0$.
+2. Motor saturated: $\omega(0) = 1000$, $V(0) = 100$.
 
-![Simulação](figures/simulation.png)
+![Simulation](figures/simulation.png)
 
-Observações:
+Observations:
 
-- Ambas as trajetórias convergem para a vizinhança do ponto de equilíbrio $(\omega \approx 500\ \mathrm{rpm},\ V \approx 50\ \mathrm{V})$ — o estado em que apenas a regra (Média, Média $\to$ Neutro) dispara com força máxima e a saída do controlador é zero.
-- Há um leve *overshoot* (~$\pm 100$ rpm) decorrente da dinâmica rate-limited da planta: a velocidade não consegue acompanhar imediatamente as mudanças na tensão, e a tensão precisa "puxar" antes de a planta responder.
-- A aceleração de comando é monotonicamente decrescente em magnitude — característica típica de uma superfície de controle suave e estabilizadora.
+- Both trajectories converge to the neighborhood of the equilibrium $(\omega \approx 500\ \mathrm{rpm},\ V \approx 50\ \mathrm{V})$ — the state where only the rule (Média, Média $\to$ Neutro) fires at full strength and the controller output is zero.
+- A small *overshoot* (~$\pm 100$ rpm) appears because of the rate-limited plant: the velocity cannot follow voltage changes immediately, and the voltage must "lead" before the plant responds.
+- The commanded acceleration is monotonically decreasing in magnitude — typical of a smooth, stabilizing control surface.
 
-## 10. Conclusões
+## 10. Conclusions
 
-- O controlador fuzzy projetado é **estável**: independentemente da condição inicial dentro do espaço de operação, o sistema converge para o ponto de equilíbrio $(500, 50)$.
-- A *predição* embutida nas regras anti-diagonais (Baixa × Alta e Alta × Baixa, ambas mapeando para *Neutro*) impede correções excessivas, suavizando a resposta.
-- Como o FIS recebe apenas $(\omega, V)$ e não recebe um *setpoint* explícito, este controlador, na forma apresentada, regula o motor a um regime "médio" implícito determinado pela base de regras. Para *seguir* uma referência arbitrária, seria necessário transformar as entradas — por exemplo, usar erro $e = \omega_{\mathrm{ref}} - \omega$ e variação $\dot e$ como entradas — mantendo a mesma estrutura de inferência.
-- O método Mamdani entrega uma superfície de controle suave e interpretável: cada quadrante está claramente associado a uma decisão linguística e a sintonia se traduz em ajustar a base de regras ou as funções de pertinência, ambos passos transparentes para um especialista do domínio.
+- The fuzzy controller designed is **stable**: regardless of the initial condition within the operating space, the system converges to the equilibrium $(500, 50)$.
+- The *prediction* built into the anti-diagonal rules (Baixa × Alta and Alta × Baixa, both mapping to *Neutro*) prevents excessive corrections, smoothing the response.
+- Since the FIS receives only $(\omega, V)$ and no explicit *setpoint*, this controller, in its current form, regulates the motor at an implicit "middle" regime determined by the rule base. To *track* an arbitrary reference, the inputs would need to be transformed — e.g. use error $e = \omega_{\mathrm{ref}} - \omega$ and error rate $\dot e$ as inputs — preserving the same inference structure.
+- The Mamdani method delivers a smooth and interpretable control surface: each quadrant is clearly associated with a linguistic decision, and tuning becomes a matter of adjusting the rule base or the membership functions, both transparent steps for a domain expert.
 
-## 11. Como executar
+## 11. How to run
 
-A partir da raiz do repositório:
+From the repository root:
 
 ```bash
 python exercises/exercicio1_motor_control/motor_control.py
 ```
 
-A execução gera as cinco figuras em `figures/` e imprime a tabela de avaliações pontuais no terminal.
+The run generates the five figures in `figures/` and prints the pointwise evaluation table to the terminal.

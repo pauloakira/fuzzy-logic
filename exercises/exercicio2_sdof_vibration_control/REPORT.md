@@ -1,85 +1,85 @@
-# Relatório — Controle ativo de vibrações em estrutura SDOF com lógica fuzzy
+# Report — Active vibration control of a SDOF structure with fuzzy logic
 
-**PCS5708 — Exercício 2 — abordagem Mamdani**
+**PCS5708 — Exercise 2 — Mamdani approach**
 
-> Conforme o enunciado, este relatório apresenta as quatro telas exigidas:
+> Per the assignment, this report presents the four required deliverable views:
 >
-> 1. **Tela 1 — Variáveis de entrada** (§3)
-> 2. **Tela 2 — Variável de saída** (§4)
-> 3. **Tela 3 — Base de regras** (§5)
-> 4. **Tela 4 — Exemplo de aplicação do sistema de controle** (§9)
+> 1. **View 1 — Input variables** (§3)
+> 2. **View 2 — Output variable** (§4)
+> 3. **View 3 — Rule base** (§5)
+> 4. **View 4 — Application example of the control system** (§9)
 >
-> As demais seções dão contexto e análise de suporte.
+> The remaining sections give context and supporting analysis.
 
 ---
 
-## 1. Especificação do problema
+## 1. Problem specification
 
-Projetar um sistema de controle ativo de vibrações para uma estrutura mecânica modelada como um sistema massa-mola-amortecedor de um grau de liberdade (SDOF), submetida a excitação harmônica externa.
+Design an active vibration control system for a mechanical structure modeled as a single-degree-of-freedom (SDOF) mass-spring-damper, subject to external harmonic excitation.
 
-A força de controle é aplicada por um atuador genérico (em estrutura real seria um atuador hidráulico, eletromagnético ou piezoelétrico) e é determinada por um controlador fuzzy Mamdani.
+The control force is applied by a generic actuator (in a real structure this would be a hydraulic, electromagnetic, or piezoelectric actuator) and is determined by a Mamdani fuzzy controller.
 
-## 2. Variáveis e dimensionamento
+## 2. Variables and dimensioning
 
-### Parâmetros da planta
+### Plant parameters
 
-| Símbolo    | Valor              | Descrição                                          |
-| ---------- | ------------------ | -------------------------------------------------- |
-| $m$        | $1{,}0$ kg         | Massa                                              |
-| $k$        | $100$ N/m          | Rigidez da mola                                    |
-| $\zeta$    | $0{,}02$           | Razão de amortecimento (estrutura levemente amortecida) |
-| $c$        | $0{,}4$ N·s/m      | $c = 2\zeta\sqrt{km}$                              |
-| $\omega_n$ | $10$ rad/s         | Frequência natural não amortecida ($\sqrt{k/m}$)   |
-| $f_n$      | $\approx 1{,}59$ Hz | Frequência natural em Hz                          |
-| $F_0$      | $1{,}0$ N          | Amplitude da força de excitação harmônica          |
+| Symbol     | Value             | Description                                               |
+| ---------- | ----------------- | --------------------------------------------------------- |
+| $m$        | $1.0$ kg          | Mass                                                      |
+| $k$        | $100$ N/m         | Spring stiffness                                          |
+| $\zeta$    | $0.02$            | Damping ratio (lightly damped structure)                  |
+| $c$        | $0.4$ N·s/m       | $c = 2\zeta\sqrt{km}$                                     |
+| $\omega_n$ | $10$ rad/s        | Undamped natural frequency ($\sqrt{k/m}$)                 |
+| $f_n$      | $\approx 1.59$ Hz | Natural frequency in Hz                                   |
+| $F_0$      | $1.0$ N           | Amplitude of the harmonic excitation                      |
 
-### Variáveis do controlador
+### Controller variables
 
-| Tipo     | Variável     | Domínio              | Termos linguísticos        |
-| -------- | ------------ | -------------------- | -------------------------- |
-| Entrada  | Deslocamento | $[-0{,}3; +0{,}3]$ m | NG, NP, Z, PP, PG          |
-| Entrada  | Velocidade   | $[-3; +3]$ m/s       | NG, NP, Z, PP, PG          |
-| Saída    | Força        | $[-3; +3]$ N         | NG, NP, Z, PP, PG          |
+| Type   | Variable     | Domain               | Linguistic terms      |
+| ------ | ------------ | -------------------- | --------------------- |
+| Input  | Deslocamento | $[-0.3; +0.3]$ m     | NG, NP, Z, PP, PG     |
+| Input  | Velocidade   | $[-3; +3]$ m/s       | NG, NP, Z, PP, PG     |
+| Output | Força        | $[-3; +3]$ N         | NG, NP, Z, PP, PG     |
 
-Os universos de discurso foram escolhidos para abranger a resposta livre próxima da ressonância: a amplitude de regime permanente sem controle no caso ressonante é $x_\text{ss} = F_0 / (c\,\omega_n) \approx 0{,}25$ m, com velocidade de pico $\approx 2{,}5$ m/s. A faixa de força (3 vezes $F_0$) garante autoridade de controle suficiente.
+The universes of discourse were chosen to bracket the open-loop response near resonance: the steady-state amplitude of the uncontrolled response at resonance is $x_\text{ss} = F_0 / (c\,\omega_n) \approx 0.25$ m, with peak velocity $\approx 2.5$ m/s. The force range (3× $F_0$) gives ample control authority.
 
-Os termos linguísticos seguem a convenção:
+The linguistic-term abbreviations follow the convention:
 
-- **NG** — Negativo Grande
-- **NP** — Negativo Pequeno
+- **NG** — Negative Big (Negativo Grande)
+- **NP** — Negative Small (Negativo Pequeno)
 - **Z** — Zero
-- **PP** — Positivo Pequeno
-- **PG** — Positivo Grande
+- **PP** — Positive Small (Positivo Pequeno)
+- **PG** — Positive Big (Positivo Grande)
 
 ---
 
-## 3. Tela 1 — Variáveis de entrada
+## 3. View 1 — Input variables
 
 ### 3.1 Deslocamento
 
-Cinco funções de pertinência sobre $[-0{,}3; +0{,}3]$ m: dois ombros (NG, PG) e três triangulares (NP, Z, PP), com sobreposição em $\mu = 0{,}5$ entre vizinhas — partição padrão para controlador Mamdani.
+Five membership functions over $[-0.3; +0.3]$ m: two shoulders (NG, PG) and three triangulars (NP, Z, PP), with overlap at $\mu = 0.5$ between neighbors — the standard partition for a Mamdani controller.
 
-![Funções de pertinência — deslocamento](figures/mf_deslocamento.png)
+![Membership functions — deslocamento](figures/mf_deslocamento.png)
 
 ### 3.2 Velocidade
 
-Mesma estrutura, mapeada para $[-3; +3]$ m/s.
+Same structure, mapped to $[-3; +3]$ m/s.
 
-![Funções de pertinência — velocidade](figures/mf_velocidade.png)
-
----
-
-## 4. Tela 2 — Variável de saída
-
-Força de controle sobre $[-3; +3]$ N, com a mesma família de cinco termos. Centróides nominais nos extremos (NG em $-3$ N, PG em $+3$ N) e nos termos intermediários (NP em $-1{,}5$ N, PP em $+1{,}5$ N). O termo Z está centrado em zero, correspondendo à ausência de ação de controle.
-
-![Função de pertinência — força](figures/mf_forca.png)
+![Membership functions — velocidade](figures/mf_velocidade.png)
 
 ---
 
-## 5. Tela 3 — Base de regras
+## 4. View 2 — Output variable
 
-A base contém $5 \times 5 = 25$ regras, cobrindo todas as combinações de termos das duas entradas. A linha indica o termo da velocidade; a coluna indica o termo do deslocamento; a célula contém o termo de saída.
+Control force over $[-3; +3]$ N, with the same family of five terms. Nominal centroids at the extremes (NG at $-3$ N, PG at $+3$ N) and at the intermediate terms (NP at $-1.5$ N, PP at $+1.5$ N). The Z term is centered at zero, corresponding to no control action.
+
+![Membership function — force](figures/mf_forca.png)
+
+---
+
+## 5. View 3 — Rule base
+
+The base contains $5 \times 5 = 25$ rules covering all combinations of the two input terms. The row indicates the velocity term; the column indicates the displacement term; the cell holds the output term.
 
 | Velocidade \ Deslocamento | NG  | NP  | Z   | PP  | PG  |
 | ------------------------- | --- | --- | --- | --- | --- |
@@ -89,30 +89,30 @@ A base contém $5 \times 5 = 25$ regras, cobrindo todas as combinações de term
 | **PP**                    | PP  | Z   | NP  | NP  | NG  |
 | **PG**                    | Z   | NP  | NG  | NG  | NG  |
 
-![Mapa de calor da base de regras](figures/rule_base.png)
+![Rule-base heatmap](figures/rule_base.png)
 
-### 5.1 Lógica da base
+### 5.1 Logic of the rule base
 
-A base codifica um controlador estilo *plano de fase* (PD-fuzzy): a força aplicada opõe-se energeticamente à dinâmica.
+The base encodes a *phase-plane* style controller (PD-fuzzy): the applied force opposes the dynamics energetically.
 
-- **Diagonal principal (NG, NG) → PG** ... **(PG, PG) → NG**: quando deslocamento e velocidade têm o mesmo sinal (massa afastando-se da origem), aplica-se força máxima oposta.
-- **Anti-diagonal (NG, PG) → Z** ... **(PG, NG) → Z**: quando deslocamento e velocidade têm sinais opostos (massa retornando à origem), o controlador recua — a dinâmica natural já está corrigindo o estado.
-- **Linha/coluna central (Z, ·)** e **(·, Z)**: o controlador atua proporcionalmente à magnitude da entrada não-nula, indo de PG quando o outro for NG, até NG quando o outro for PG.
+- **Main diagonal (NG, NG) → PG** ... **(PG, PG) → NG**: when displacement and velocity have the same sign (mass moving away from the origin), apply maximum opposing force.
+- **Anti-diagonal (NG, PG) → Z** ... **(PG, NG) → Z**: when displacement and velocity have opposite signs (mass returning toward the origin), the controller backs off — natural dynamics are already correcting the state.
+- **Center row/column (Z, ·)** and **(·, Z)**: the controller acts proportionally to the magnitude of the non-zero input, going from PG when the other is NG, down to NG when the other is PG.
 
-A simetria é fundamental: não há viés em nenhuma direção da resposta.
+The symmetry is essential: there is no bias in any direction of the response.
 
 ---
 
-## 6. Inferência
+## 6. Inference
 
-Mamdani clássico:
+Classical Mamdani:
 
-- t-norma para AND (entre antecedentes): `min`.
-- Implicação de Mamdani: recorte do consequente pela força da regra.
-- Agregação inter-regras: `max`.
-- Defuzzificação: centróide sobre uma grade discreta de 401 pontos em $[-3; +3]$ N.
+- t-norm for AND (between antecedents): `min`.
+- Mamdani implication: clip the consequent by the rule strength.
+- Inter-rule aggregation: `max`.
+- Defuzzification: centroid over a discrete 401-point grid in $[-3; +3]$ N.
 
-Para cada regra $i$:
+For each rule $i$:
 
 $$
 w_i \;=\; \min\bigl(\mu_{X_i}(x),\; \mu_{V_i}(\dot x)\bigr),
@@ -120,13 +120,13 @@ w_i \;=\; \min\bigl(\mu_{X_i}(x),\; \mu_{V_i}(\dot x)\bigr),
 \mu_{U_i'}(u) \;=\; \min\bigl(w_i,\; \mu_{U_i}(u)\bigr)
 $$
 
-Saída agregada:
+Aggregated output:
 
 $$
 \mu_{U'}(u) \;=\; \max_i \mu_{U_i'}(u)
 $$
 
-Saída crisp por centróide:
+Crisp output by centroid:
 
 $$
 u^* \;=\; \frac{\sum_u u \cdot \mu_{U'}(u)}{\sum_u \mu_{U'}(u)}
@@ -134,87 +134,87 @@ $$
 
 ---
 
-## 7. Superfície de controle
+## 7. Control surface
 
-Avaliando o FIS sobre a grade $[-0{,}3; 0{,}3]\,\mathrm{m} \times [-3; 3]\,\mathrm{m/s}$:
+Evaluating the FIS over the grid $[-0.3; 0.3]\,\mathrm{m} \times [-3; 3]\,\mathrm{m/s}$:
 
-![Superfície de controle](figures/control_surface.png)
+![Control surface](figures/control_surface.png)
 
-A superfície é suave (graças à sobreposição dos termos e ao centróide) e **anti-simétrica em torno da origem** — propriedade desejável para um controlador de vibração: a resposta é a mesma em magnitude para deslocamentos opostos, apenas com o sinal trocado.
+The surface is smooth (thanks to term overlap and centroid defuzzification) and **anti-symmetric about the origin** — a desirable property for a vibration controller: the response has the same magnitude for opposite displacements, only with the sign flipped.
 
 ---
 
-## 8. Modelo da planta e simulação
+## 8. Plant model and simulation
 
-Equação do movimento:
+Equation of motion:
 
 $$
 m\,\ddot x(t) + c\,\dot x(t) + k\,x(t) \;=\; F_\text{ext}(t) + u(t)
 $$
 
-com $F_\text{ext}(t) = F_0\sin(\omega t)$ e $u(t) = \mathrm{FIS}(x(t),\,\dot x(t))$ realimentada do estado da planta.
+with $F_\text{ext}(t) = F_0\sin(\omega t)$ and $u(t) = \mathrm{FIS}(x(t),\,\dot x(t))$ fed back from the plant state.
 
-A integração numérica usa Runge-Kutta de 4ª ordem com passo $\Delta t = 5$ ms e *zero-order hold* sobre $u$ — isto é, a saída do controlador é mantida constante ao longo de cada passo de integração, modelando o comportamento de um atuador real comandado em tempo discreto.
-
----
-
-## 9. Tela 4 — Exemplo de aplicação do sistema de controle
-
-Excitação harmônica em ressonância ($\omega = \omega_n = 10$ rad/s) — o caso mais severo. Sistema parte do repouso, $x(0) = \dot x(0) = 0$.
-
-![Exemplo de aplicação — simulação no domínio do tempo](figures/simulation.png)
-
-### 9.1 Métricas de regime permanente (últimos 4 s)
-
-| Métrica                       | Sem controle | Com controle fuzzy | Redução |
-| ----------------------------- | -----------: | -----------------: | ------: |
-| Pico $\lvert x \rvert$ (m)    |       0,2270 |             0,0742 |  67,3 % |
-| RMS $x$ (m)                   |       0,1532 |             0,0526 |  65,7 % |
-| Pico $\lvert u \rvert$ (N)    |            — |             0,7443 |       — |
-
-### 9.2 Interpretação
-
-- O sistema sem controle, levemente amortecido ($\zeta = 0{,}02$) e em ressonância, alcança grande amplitude — quase 23 cm de oscilação em torno da posição de equilíbrio.
-- Com o controlador fuzzy ativo, a amplitude de regime cai para aproximadamente **um terço** do valor sem controle.
-- A força de controle de pico ($\approx 0{,}74$ N) é da mesma ordem da força de excitação ($F_0 = 1$ N) e bem abaixo do limite do atuador ($U_\text{max} = 3$ N) — há ainda margem para ajuste mais agressivo.
-- A força $u(t)$ está praticamente em oposição de fase com $F_\text{ext}(t)$, como esperado para um cancelamento ativo: ao detectar a tendência de movimento, o controlador aplica uma força contrária na hora certa.
+Numerical integration uses fourth-order Runge-Kutta with step $\Delta t = 5$ ms and *zero-order hold* on $u$ — that is, the controller output is held constant over each integration step, modeling the behavior of a real actuator commanded in discrete time.
 
 ---
 
-## 10. Resposta em frequência
+## 9. View 4 — Application example of the control system
 
-Varredura entre $0{,}4\,\omega_n$ e $1{,}8\,\omega_n$, registrando a amplitude de regime permanente em cada caso:
+Harmonic excitation at resonance ($\omega = \omega_n = 10$ rad/s) — the most severe case. The system starts from rest, $x(0) = \dot x(0) = 0$.
 
-![Resposta em frequência](figures/frequency_response.png)
+![Application example — time-domain simulation](figures/simulation.png)
 
-- **Pico de ressonância**: o controlador reduz drasticamente a amplitude em $\omega \approx \omega_n$, achatando o pico ressonante.
-- **Fora da ressonância**: a contribuição do controlador é pequena (a planta já é estável e o controlador, vendo deslocamento e velocidade pequenos, comanda força próxima de zero).
-- **Acima de $1{,}3\,\omega_n$**: as duas curvas praticamente coincidem — em altas frequências a planta atenua naturalmente a excitação, e a ação fuzzy é mínima.
+### 9.1 Steady-state metrics (last 4 s)
 
-Este é o padrão típico de um controle ativo de vibrações: maior benefício no entorno da ressonância, sem perturbar regiões já bem comportadas.
+| Metric                       | Uncontrolled | Fuzzy-controlled | Reduction |
+| ---------------------------- | -----------: | ---------------: | --------: |
+| Peak $\lvert x \rvert$ (m)   |       0.2270 |           0.0742 |    67.3 % |
+| RMS $x$ (m)                  |       0.1532 |           0.0526 |    65.7 % |
+| Peak $\lvert u \rvert$ (N)   |            — |           0.7443 |         — |
 
----
+### 9.2 Interpretation
 
-## 11. Conclusões
-
-- O controlador Mamdani projetado **funciona**: redução de ~67 % na amplitude de pico e RMS em ressonância, com força de controle de pico bem abaixo do limite do atuador.
-- A estrutura *plano-de-fase* da base de regras é equivalente a um controlador PD não-linear, mas com a vantagem da **interpretabilidade**: cada célula da tabela 5 × 5 é justificável a partir do conhecimento de especialista.
-- A **superfície de controle anti-simétrica** garante resposta uniforme em ambas as direções; a suavização introduzida pelo centróide evita comportamento *bang-bang*.
-- A redução de amplitude poderia ser melhorada por:
-  1. **Mais termos linguísticos** (7 ou 9 termos por variável) — refinaria a resolução do controlador.
-  2. **Ajuste dos ganhos de escala** das entradas e saída — possivelmente via algoritmo genético, conforme literatura.
-  3. **Atuador mais rápido** — neste exercício o controlador usa *zero-order hold* a 5 ms, próximo de uma implementação real.
-  4. **Universo de força mais largo** — aumentar $U_\text{max}$ daria mais autoridade.
-- A escolha entre Mamdani e Sugeno favoreceu Mamdani aqui pela clareza pedagógica: cada regra é uma frase em português, e a simetria física do problema (um controlador de oscilação não pode ter viés direcional) emerge naturalmente da simetria do mapa de regras.
+- The uncontrolled system, lightly damped ($\zeta = 0.02$) and at resonance, reaches large amplitude — nearly 23 cm of oscillation around the equilibrium position.
+- With the fuzzy controller active, the steady-state amplitude drops to roughly **one third** of the uncontrolled value.
+- The peak control force ($\approx 0.74$ N) is on the same order as the excitation force ($F_0 = 1$ N) and well below the actuator limit ($U_\text{max} = 3$ N) — there is still margin for more aggressive tuning.
+- The force $u(t)$ is essentially in phase opposition to $F_\text{ext}(t)$, as expected for active cancellation: detecting the tendency of motion, the controller applies an opposing force at the right time.
 
 ---
 
-## 12. Como executar
+## 10. Frequency response
 
-A partir da raiz do repositório:
+Sweep between $0.4\,\omega_n$ and $1.8\,\omega_n$, recording the steady-state amplitude in each case:
+
+![Frequency response](figures/frequency_response.png)
+
+- **Resonance peak**: the controller drastically reduces the amplitude near $\omega \approx \omega_n$, flattening the resonant peak.
+- **Off resonance**: the controller's contribution is small (the plant is already stable, and the controller — seeing small displacement and velocity — commands a force close to zero).
+- **Above $1.3\,\omega_n$**: the two curves nearly coincide — at high frequencies the plant naturally attenuates the excitation, and the fuzzy action is minimal.
+
+This is the typical pattern of an active vibration controller: largest benefit around resonance, no penalty in regions that are already well behaved.
+
+---
+
+## 11. Conclusions
+
+- The Mamdani controller designed **works**: ~67 % reduction in peak and RMS amplitude at resonance, with peak control force well below the actuator limit.
+- The *phase-plane* structure of the rule base is equivalent to a non-linear PD controller, but with the advantage of **interpretability**: every cell of the 5 × 5 table is justifiable from expert knowledge.
+- The **anti-symmetric control surface** ensures uniform response in both directions; the smoothing introduced by the centroid avoids *bang-bang* behavior.
+- Amplitude reduction could be improved by:
+  1. **More linguistic terms** (7 or 9 terms per variable) — would refine the controller's resolution.
+  2. **Tuning the input/output scaling gains** — possibly via a genetic algorithm, as in the literature.
+  3. **A faster actuator** — in this exercise the controller uses *zero-order hold* at 5 ms, close to a real implementation.
+  4. **A wider force universe** — increasing $U_\text{max}$ would give more authority.
+- The choice between Mamdani and Sugeno favored Mamdani here for pedagogical clarity: every rule reads as a sentence, and the physical symmetry of the problem (a vibration controller cannot have directional bias) emerges naturally from the symmetry of the rule map.
+
+---
+
+## 12. How to run
+
+From the repository root:
 
 ```bash
 python exercises/exercicio2_sdof_vibration_control/sdof_vibration.py
 ```
 
-A execução gera as sete figuras em `figures/` e imprime as métricas de regime no terminal.
+The run generates the seven figures in `figures/` and prints the steady-state metrics to the terminal.
