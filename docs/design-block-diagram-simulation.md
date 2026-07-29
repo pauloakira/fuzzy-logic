@@ -40,14 +40,22 @@ There is also a forward cost. Each of these is currently a new ~300-line script:
 
 All four are "same harness, different block".
 
-## 2. Non-goals
+## 2. Goals and non-goals
 
-Stated explicitly, because the natural failure mode here is building a Simulink clone
-instead of doing fuzzy-logic research:
+**A graphical block-diagram editor is a project goal** (decided 2026-07-29). An earlier draft
+of this note listed "no GUI" as a non-goal on the reasoning that the deliverables are
+markdown and matplotlib; that was overruled, and §11 records what the UI requires from the
+core. The engineering consequence is concrete and worth stating up front: **a UI needs a
+serializable declarative model**, which the imperative `Diagram.connect(...)` API does not
+by itself provide.
 
-- **No GUI.** Deliverables are markdown + matplotlib. A canvas ships nothing. Text-as-model
-  is also strictly better for research: git-diffable, reviewable, and loopable for parameter
-  sweeps (which `.slx` is not).
+The one property the UI must not cost us is text-as-model: git-diffable, reviewable, and
+loopable for parameter sweeps. Simulink's `.slx` fails all three, and a frequency sweep is a
+`for` loop here and a chore there. So the canvas must read and write a plain-text spec that
+remains the source of truth — the diagram file is authored *either* way, never only by mouse.
+
+Still out of scope:
+
 - **No acausal / implicit equation modelling** (Modelica-style). Signal flow only.
 - **No algebraic-loop solver.** Detect, raise a clear error, tell the user to insert a `ZOH`
   or `UnitDelay`. Every physical plant here has `D = 0`, so this never triggers in practice.
@@ -61,7 +69,7 @@ exercise needs it. No speculative blocks.
 
 ## 3. Core model
 
-Two orthogonal properties instead of a deep class hierarchy.
+Three orthogonal properties instead of a deep class hierarchy.
 
 ```python
 class Block:
@@ -70,6 +78,7 @@ class Block:
     outputs: tuple[str, ...]
     n_states: int = 0          # 0 => algebraic
     feedthrough: bool = True   # does output() depend on u? (False breaks loops)
+    discrete: bool = False     # sampled at the control rate, output held between
 
     def output(self, t: float, x: NDArray, u: Mapping[str, Any]) -> dict[str, Any]: ...
     def derivative(self, t: float, x: NDArray, u: Mapping[str, Any]) -> NDArray: ...
@@ -85,7 +94,7 @@ d.connect((plant, "y"), (ctrl, "x"))
 d.connect(plant, ctrl)              # shorthand when both are single-port
 ```
 
-### 3.1 Blocks needed by phases 1–3
+### 3.1 Blocks (as implemented)
 
 | Block | States | Feedthrough | Needed by |
 | --- | --- | --- | --- |
@@ -95,11 +104,16 @@ d.connect(plant, ctrl)              # shorthand when both are single-port
 | `Gain(k)`, `Sum(ports, signs)` | 0 | yes | wiring |
 | `Select(index)` | 0 | yes | splitting a plant state vector into scalars |
 | `Saturation(lo, hi)` | 0 | yes | actuator limits |
-| `FISBlock(fis, input_map, clip)` | 0 | yes | ex. 1, ex. 2 |
-| `PIDBlock(kp, ki, kd, Tt, lo, hi)` | 1 | yes | comparison |
-| `ZOH(inner, dt)` | — | no | hybrid controller |
-| `LQRBlock(K)` | 0 | yes | phase 3 |
-| `Observer(A, B, C, L)` | n | yes | phase 3 |
+| `FISBlock(fis, gain, clip)` | 0 | sampled | ex. 1, ex. 2 |
+| `PIDBlock(kp, ki, kd, lo, hi, Tt)` | 0 | sampled | comparison |
+| `StateFeedback(K)` | 0 | sampled | phase 5 (LQR) |
+| `Observer(A, B, C, L)` | n | yes | phase 5 — not yet written |
+
+Sampling turned out to be a *property* of a controller block (`discrete = True`), not a
+separate `ZOH` wrapper as first sketched: the block holds its own value and the outer loop
+calls `update()` once per control step. `PIDBlock` therefore carries its integrator as
+internal discrete state rather than as a diagram state, which is what makes it reproduce
+`pid_comparison.py` exactly. `sdof_plant(m, c, k)` is a thin `StateSpacePlant` factory.
 
 `FISBlock` wraps `MamdaniFIS` and owns the input clipping currently inlined at
 `sdof_vibration.py:183-184`. It also owns the **input scaling gains** — which is where the
@@ -155,7 +169,7 @@ linearised continuous section. `steady_state()` warns when
 On the current exercise-2 setup (`t_max=12`, `window=4`, `tau=5`) this fires immediately,
 which is exactly the intended behaviour: the bug becomes loud instead of silent.
 
-## 6. Mermaid export (phase 3)
+## 6. Mermaid export
 
 `Diagram.to_mermaid()` walks blocks and connections and emits a flowchart. ~40 lines.
 
@@ -201,14 +215,25 @@ per new public function. Minimum set:
 
 ## 9. Phasing
 
-1. **Core + tests.** `sim.py`, `blocks.py`, `metrics.py`, `tests/unit/`, `pyproject.toml`.
-   No exercise touched. Exit criterion: tests green.
-2. **Refactor exercise 2 and the PID comparison onto it.** Exit criterion: metrics reproduce
-   the current published numbers, *then* fix `t_max` once and regenerate figures/reports.
-3. **`to_mermaid()`, `LQRBlock`, `Observer`.** Unblocks the state-space follow-ups and the
-   missing block-diagram figures.
-4. **Exercise 1** refactor, together with its V/s-vs-rpm/s unit fix and the equilibrium
+The editor goal (§11) inserts a step: the declarative spec now comes **before** the exercise
+port, so the exercises are built from the same representation the canvas will load rather
+than being ported twice.
+
+1. ~~**Core + tests.**~~ **Done** — `sim.py`, `blocks.py`, `metrics.py`, `tests/unit/`,
+   `pyproject.toml`. 32 tests green, no exercise touched. See §10.
+2. **Declarative spec + registry.** `fuzzy/spec.py`: block registry, per-block parameter
+   schema, `Diagram.to_spec()` / `Diagram.from_spec()`, JSON round-trip, layout metadata
+   passthrough. Stack-independent, so it is safe to build before the UI stack is chosen.
+3. **Port exercise 2 and the PID comparison**, constructed from a spec so they double as
+   editor fixtures. Exit criterion: metrics reproduce the numbers in §10, *then* fix `t_max`
+   and the `u_peak` mask (§10.1) and regenerate figures and reports.
+4. **Declarative membership functions and rule bases.** The largest remaining piece and a
+   hard prerequisite for editing fuzzy controllers in the UI — see §11.3.
+5. **`LQRBlock`, `Observer`, Mermaid figures in the reports.** Unblocks the state-space
+   follow-ups.
+6. **Exercise 1** refactor, together with its V/s-vs-rpm/s unit fix and the equilibrium
    claims. Separate change — it has report corrections entangled with it.
+7. **The editor itself.** Stack decision deferred to §11.6.
 
 ## 10. Validation
 
@@ -251,7 +276,82 @@ script, on a properly settled horizon (`t_max=40`):
 All 12 committed figures currently regenerate bit-identically, so any diff during the
 phase-2 refactor is a real regression signal, not noise.
 
-## 11. Risk
+## 11. What the graphical editor requires from the core
+
+The canvas is phase 7, but it constrains phases 2–4, so the requirements are recorded now.
+Everything below is stack-independent — which is the argument for building the spec layer
+before picking a UI technology.
+
+### 11.1 A serializable spec as the source of truth
+
+The imperative API builds a `Diagram` from live Python objects holding closures. That cannot
+round-trip through a file. The editor needs a flat, declarative document:
+
+```json
+{
+  "version": 1,
+  "blocks": [
+    {"type": "sdof_plant", "name": "plant",
+     "params": {"m": 1.0, "c": 0.4, "k": 100.0}, "layout": {"x": 320, "y": 140}},
+    {"type": "Harmonic", "name": "force", "params": {"amplitude": 1.0, "omega": 10.0}}
+  ],
+  "connections": [
+    {"from": ["force", "y"], "to": ["total", "ext"]}
+  ]
+}
+```
+
+`Diagram.from_spec(spec)` and `Diagram.to_spec()` must round-trip losslessly. Scripts keep
+using the imperative API where it is more pleasant; both produce the same object.
+
+### 11.2 A block registry with parameter schemas
+
+`"sdof_plant"` must resolve to a factory, and each block must describe its parameters (name,
+type, default, units, bounds) so the editor renders a property panel generically instead of
+hardcoding a form per block. Adding a block should make it appear in the palette for free.
+
+### 11.3 Declarative membership functions and rule bases
+
+This is the real work, and it is the reason phase 4 exists. Today a term is an opaque
+closure built inline in each exercise:
+
+```python
+"NG": lambda x: left_shoulder(x, -0.3, -0.15)
+```
+
+A closure cannot be serialised, inspected, or edited. Terms must become data —
+`{"type": "left_shoulder", "params": [-0.3, -0.15]}` — with `MamdaniFIS` constructible from
+that description. Same for the rule base: the 5×5 table is currently built by a Python loop
+over `TERM_ORDER`, and the editor needs it as an addressable grid.
+
+This also pays off outside the UI: it is what makes `fuzzy/rules.py` (still an empty
+docstring) a real module, and it removes the per-exercise MF boilerplate the audit flagged.
+
+### 11.4 Machine-readable validation
+
+`WiringError` and `AlgebraicLoopError` currently carry human-readable strings. The canvas
+needs to highlight the offending node, so they must also carry structured references to the
+blocks and ports involved.
+
+### 11.5 Layout metadata
+
+Node positions belong in the spec but must be ignored by the simulator and preserved across
+round-trips. `to_mermaid()` (§6) stays useful as the headless renderer for reports.
+
+### 11.6 Stack — deliberately deferred
+
+To be decided after phase 2, when the spec exists and the choice is reversible:
+
+- **Local web app** (FastAPI/Flask + a JS flow canvas). Best canvas ergonomics; adds a
+  JS toolchain.
+- **Native** (PySide/PyQt). Pure Python, no toolchain; more code for a good canvas.
+- **Notebook widget** (anywidget/ipywidgets). Cheapest to reach, fits the exploratory
+  workflow; weakest as a standalone tool.
+
+Constraint on all three: the simulator must remain runnable headless, with no UI import on
+the `simulate()` path.
+
+## 12. Risk
 
 The honest risk is scope creep: a simulation framework is more fun to build than ANFIS, and
 `rules.py` / `anfis.py` are still empty docstrings. Mitigations: the non-goals in §2, the
