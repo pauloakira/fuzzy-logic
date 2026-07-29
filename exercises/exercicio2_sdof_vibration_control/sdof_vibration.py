@@ -19,6 +19,21 @@ Controller
 - 5 x 5 phase-plane rule base — control opposes motion energetically.
 - min t-norm, max aggregation, centroid defuzzification.
 
+Simulation
+----------
+The plant, excitation, actuator, and controller are assembled as a block
+diagram (`fuzzy.sim`) rather than a hand-rolled integration loop, so the same
+diagram serves the open-loop, fuzzy, and PID cases and can be saved as a spec
+file for the graphical editor. See `docs/design-block-diagram-simulation.md`.
+
+Metric horizon
+--------------
+`T_MAX = 40 s`. The plant's transient decays with `tau = 1/(zeta*omega_n) = 5 s`,
+so the earlier 12 s horizon left the *uncontrolled* reference 9 % below its true
+amplitude while the controlled cases had already settled — a one-sided bias in
+every reported reduction. `fuzzy.metrics.steady_state` now warns when the window
+is not genuinely steady state.
+
 Outputs
 -------
 - figures/mf_deslocamento.png      — input variable: displacement
@@ -28,24 +43,31 @@ Outputs
 - figures/control_surface.png      — 3D control surface u = FIS(x, x_dot)
 - figures/simulation.png           — application example at resonance
 - figures/frequency_response.png   — uncontrolled vs. controlled across freq
+- diagram.json                     — block-diagram spec (editor fixture)
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Allow running from anywhere by putting the repo root on sys.path.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from fuzzy.fis import MamdaniFIS  # noqa: E402
-from fuzzy.membership import left_shoulder, right_shoulder, triangular  # noqa: E402
-
+from fuzzy.blocks import (
+    Block,
+    Constant,
+    FISBlock,
+    Harmonic,
+    Saturation,
+    Select,
+    Sum,
+    sdof_plant,
+)
+from fuzzy.fis import MamdaniFIS
+from fuzzy.membership import left_shoulder, right_shoulder, triangular
+from fuzzy.metrics import steady_state
+from fuzzy.sim import Diagram, Log, simulate
+from fuzzy.spec import save
 
 # ----- Plant parameters -----------------------------------------------------
 
@@ -60,6 +82,13 @@ OMEGA_N = float(np.sqrt(K / M))         # rad/s
 X_MAX = 0.3        # m
 V_MAX = 3.0        # m/s
 U_MAX = 3.0        # N
+
+# ----- Simulation settings --------------------------------------------------
+
+DT = 0.005                  # s — control period and integration step
+T_MAX = 40.0                # s — >= 4*tau settling (20 s) plus the metric window
+METRIC_WINDOW = 4.0         # s — trailing window used for steady-state metrics
+TAU = 1.0 / (ZETA * OMEGA_N)  # s — open-loop transient decay time constant
 
 
 # ----- Membership functions -------------------------------------------------
@@ -142,66 +171,99 @@ def build_fis() -> MamdaniFIS:
     )
 
 
-# ----- Plant simulation -----------------------------------------------------
+# ----- Block diagram --------------------------------------------------------
+
+FUZZY_PORTS = ("deslocamento", "velocidade")
+"""Displacement and velocity input ports of the fuzzy controller."""
+
+_LAYOUT = {
+    "force": {"x": 40.0, "y": 40.0},
+    "total": {"x": 200.0, "y": 120.0},
+    "plant": {"x": 360.0, "y": 120.0},
+    "pos": {"x": 520.0, "y": 40.0},
+    "vel": {"x": 520.0, "y": 200.0},
+    "controller": {"x": 680.0, "y": 120.0},
+    "actuator": {"x": 680.0, "y": 260.0},
+}
 
 
-def _harmonic(t: float, omega: float) -> float:
-    return F0 * np.sin(omega * t)
+def fuzzy_controller(gain: float = 1.0, name: str = "controller") -> FISBlock:
+    """The Mamdani controller as a sampled block.
+
+    `gain` scales both inputs before they reach the FIS: `gain=10` is equivalent
+    to a 10x tighter universe of discourse, and is the fuzzy analogue of raising
+    a state-feedback gain vector `K`.
+    """
+    return FISBlock(
+        build_fis(),
+        gain={port: gain for port in FUZZY_PORTS},
+        clip={FUZZY_PORTS[0]: (-X_MAX, X_MAX), FUZZY_PORTS[1]: (-V_MAX, V_MAX)},
+        name=name,
+    )
 
 
-def _deriv(state: np.ndarray, t: float, omega: float, u: float) -> np.ndarray:
-    """ODE right-hand side for SDOF: state = [x, x_dot]."""
-    x, v = state
-    F = _harmonic(t, omega)
-    accel = (F + u - C * v - K * x) / M
-    return np.array([v, accel])
-
-
-def simulate(
-    omega: float,
-    t_max: float,
-    dt: float,
-    fis: MamdaniFIS | None = None,
+def build_diagram(
+    controller: Block | None = None,
+    ports: tuple[str, str] = FUZZY_PORTS,
+    omega: float = OMEGA_N,
     x0: float = 0.0,
     v0: float = 0.0,
-) -> dict[str, np.ndarray]:
-    """RK4 simulation with zero-order-hold on the control force.
+    name: str = "sdof",
+) -> Diagram:
+    """Assemble the SDOF plant with harmonic forcing and an optional controller.
 
-    If `fis` is None, runs the open-loop response (u = 0).
+    `controller is None` gives the open-loop response. `ports` names the
+    controller's displacement and velocity inputs, in that order.
     """
-    n_steps = int(t_max / dt) + 1
-    t = np.zeros(n_steps)
-    x = np.zeros(n_steps)
-    v = np.zeros(n_steps)
-    u = np.zeros(n_steps)
-    state = np.array([x0, v0])
+    d = Diagram(name=name)
+    plant = sdof_plant(M, C, K, x0=x0, v0=v0, name="plant")
+    force = Harmonic(amplitude=F0, omega=omega, name="force")
+    total = Sum(("ext", "ctrl"), name="total")
 
-    for i in range(n_steps - 1):
-        if fis is None:
-            u_now = 0.0
-        else:
-            xc = float(np.clip(state[0], -X_MAX, X_MAX))
-            vc = float(np.clip(state[1], -V_MAX, V_MAX))
-            u_now = fis.evaluate({"deslocamento": xc, "velocidade": vc})
-        u[i] = u_now
+    d.connect(force, (total, "ext"))
+    d.connect(total, plant)
 
-        # RK4 with constant u over the step (zero-order hold).
-        k1 = _deriv(state, t[i], omega, u_now)
-        k2 = _deriv(state + 0.5 * dt * k1, t[i] + 0.5 * dt, omega, u_now)
-        k3 = _deriv(state + 0.5 * dt * k2, t[i] + 0.5 * dt, omega, u_now)
-        k4 = _deriv(state + dt * k3, t[i] + dt, omega, u_now)
-        state = state + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    if controller is None:
+        d.connect(Constant(0.0, name="controller"), (total, "ctrl"))
+    else:
+        # The actuator limit is stated once and shared by every controller, so
+        # the comparison cannot drift into unequal authority.
+        actuator = Saturation(-U_MAX, U_MAX, name="actuator")
+        pos, vel = Select(0, name="pos"), Select(1, name="vel")
+        d.connect(plant, pos)
+        d.connect(plant, vel)
+        d.connect(pos, (controller, ports[0]))
+        d.connect(vel, (controller, ports[1]))
+        d.connect(controller, actuator)
+        d.connect(actuator, (total, "ctrl"))
 
-        x[i + 1] = state[0]
-        v[i + 1] = state[1]
-        t[i + 1] = t[i] + dt
+    present = {b.name for b in d.blocks}
+    d.layout.update({k: v for k, v in _LAYOUT.items() if k in present})
+    return d
 
-    if fis is not None:
-        xc = float(np.clip(state[0], -X_MAX, X_MAX))
-        vc = float(np.clip(state[1], -V_MAX, V_MAX))
-        u[-1] = fis.evaluate({"deslocamento": xc, "velocidade": vc})
 
-    return {"t": t, "x": x, "v": v, "u": u}
+def run(
+    controller: Block | None = None,
+    ports: tuple[str, str] = FUZZY_PORTS,
+    omega: float = OMEGA_N,
+    t_max: float = T_MAX,
+) -> Log:
+    """Build and simulate in one step."""
+    d = build_diagram(controller, ports=ports, omega=omega)
+    return simulate(d, t_max=t_max, dt_control=DT)
+
+
+def response_metrics(log: Log) -> dict[str, float]:
+    """Steady-state displacement and control-effort metrics for one run.
+
+    Every entry uses the same trailing window — the earlier `u_peak` was a
+    whole-run maximum reported inside a steady-state table.
+    """
+    x = steady_state(log, "plant.y", window=METRIC_WINDOW, index=0, tau=TAU)
+    out = {"peak": x["peak"], "rms": x["rms"]}
+    if "actuator.y" in log.signals:
+        out["u_peak"] = steady_state(log, "actuator.y", window=METRIC_WINDOW)["peak"]
+    return out
 
 
 # ----- Plotting -------------------------------------------------------------
@@ -212,7 +274,7 @@ PALETTE = ["#d62728", "#ff7f0e", "#1f77b4", "#2ca02c", "#9467bd"]
 
 def _plot_terms(ax, terms_dict, low, high, title, xlabel, ylabel):
     x = np.linspace(low, high, 1001)
-    for color, name in zip(PALETTE, TERM_ORDER):
+    for color, name in zip(PALETTE, TERM_ORDER, strict=True):
         ax.plot(x, terms_dict[name](x), color=color, lw=2, label=name)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -312,42 +374,43 @@ def plot_control_surface(fis: MamdaniFIS, figdir: Path) -> None:
     plt.close(fig)
 
 
-def plot_simulation(fis: MamdaniFIS, figdir: Path) -> dict[str, float]:
+def plot_simulation(figdir: Path) -> dict[str, dict[str, float]]:
     """Time-domain comparison at resonance (omega = omega_n).
 
-    Returns a small dict of summary metrics for the report.
+    The full 40 s horizon is plotted, so the uncontrolled envelope is visibly
+    still growing toward its analytic asymptote F0/(c*omega_n) = 0.25 m.
     """
-    omega = OMEGA_N
-    t_max = 12.0
-    dt = 0.005
+    open_log = run(None)
+    ctrl_log = run(fuzzy_controller())
 
-    h_open = simulate(omega, t_max=t_max, dt=dt, fis=None)
-    h_ctrl = simulate(omega, t_max=t_max, dt=dt, fis=fis)
+    fig, axes = plt.subplots(3, 1, figsize=(10.0, 7.4), sharex=True)
 
-    fig, axes = plt.subplots(3, 1, figsize=(8.0, 7.0), sharex=True)
-
-    axes[0].plot(h_open["t"], h_open["x"], color="#d62728", lw=1.5,
+    axes[0].plot(open_log.t, open_log.col("plant.y", 0), color="#d62728", lw=1.0,
                  label="Sem controle", alpha=0.8)
-    axes[0].plot(h_ctrl["t"], h_ctrl["x"], color="#1f77b4", lw=1.5,
+    axes[0].plot(ctrl_log.t, ctrl_log.col("plant.y", 0), color="#1f77b4", lw=1.0,
                  label="Com controle fuzzy")
+    axes[0].axhline(F0 / (C * OMEGA_N), color="gray", linestyle=":", alpha=0.7,
+                    label=r"$F_0/(c\,\omega_n)$")
+    axes[0].axhline(-F0 / (C * OMEGA_N), color="gray", linestyle=":", alpha=0.7)
     axes[0].set_ylabel("Deslocamento x (m)")
-    axes[0].legend(loc="upper right")
+    axes[0].legend(loc="upper right", ncol=3, fontsize=9)
     axes[0].grid(alpha=0.3)
 
-    axes[1].plot(h_open["t"], h_open["v"], color="#d62728", lw=1.5,
+    axes[1].plot(open_log.t, open_log.col("plant.y", 1), color="#d62728", lw=1.0,
                  alpha=0.8)
-    axes[1].plot(h_ctrl["t"], h_ctrl["v"], color="#1f77b4", lw=1.5)
+    axes[1].plot(ctrl_log.t, ctrl_log.col("plant.y", 1), color="#1f77b4", lw=1.0)
     axes[1].set_ylabel(r"Velocidade $\dot x$ (m/s)")
     axes[1].grid(alpha=0.3)
 
-    F_ext = F0 * np.sin(omega * h_ctrl["t"])
-    axes[2].plot(h_ctrl["t"], F_ext, color="gray", lw=1.0,
-                 label=r"$F_\mathrm{ext}(t)$", alpha=0.7)
-    axes[2].plot(h_ctrl["t"], h_ctrl["u"], color="#2ca02c", lw=1.5,
+    axes[2].plot(ctrl_log.t, ctrl_log["force.y"], color="gray", lw=0.8,
+                 label=r"$F_\mathrm{ext}(t)$", alpha=0.6)
+    axes[2].plot(ctrl_log.t, ctrl_log["actuator.y"], color="#2ca02c", lw=1.0,
                  label="u(t)  (fuzzy)")
     axes[2].set_ylabel("Força (N)")
     axes[2].set_xlabel("Tempo (s)")
-    axes[2].legend(loc="upper right")
+    axes[2].axvspan(T_MAX - METRIC_WINDOW, T_MAX, color="black", alpha=0.06,
+                    label="janela de regime")
+    axes[2].legend(loc="upper right", ncol=3, fontsize=9)
     axes[2].grid(alpha=0.3)
 
     fig.suptitle(
@@ -358,36 +421,18 @@ def plot_simulation(fis: MamdaniFIS, figdir: Path) -> dict[str, float]:
     fig.savefig(figdir / "simulation.png", dpi=140)
     plt.close(fig)
 
-    # Metrics on the last 4 seconds (steady-state regime).
-    last4 = h_ctrl["t"] >= (t_max - 4.0)
-    peak_open = float(np.max(np.abs(h_open["x"][last4])))
-    peak_ctrl = float(np.max(np.abs(h_ctrl["x"][last4])))
-    rms_open = float(np.sqrt(np.mean(h_open["x"][last4] ** 2)))
-    rms_ctrl = float(np.sqrt(np.mean(h_ctrl["x"][last4] ** 2)))
-    return {
-        "peak_open": peak_open,
-        "peak_ctrl": peak_ctrl,
-        "rms_open": rms_open,
-        "rms_ctrl": rms_ctrl,
-        "u_peak": float(np.max(np.abs(h_ctrl["u"]))),
-    }
+    return {"open": response_metrics(open_log), "fuzzy": response_metrics(ctrl_log)}
 
 
-def plot_frequency_response(fis: MamdaniFIS, figdir: Path) -> None:
+def plot_frequency_response(figdir: Path) -> None:
     """Steady-state amplitude over a frequency sweep, controlled vs. open."""
     omegas = np.linspace(0.4 * OMEGA_N, 1.8 * OMEGA_N, 18)
-    t_max = 18.0
-    dt = 0.005
-
     amp_open = np.zeros_like(omegas)
     amp_ctrl = np.zeros_like(omegas)
 
     for i, om in enumerate(omegas):
-        h_o = simulate(om, t_max=t_max, dt=dt, fis=None)
-        h_c = simulate(om, t_max=t_max, dt=dt, fis=fis)
-        last = h_o["t"] >= (t_max - 4.0)
-        amp_open[i] = np.max(np.abs(h_o["x"][last]))
-        amp_ctrl[i] = np.max(np.abs(h_c["x"][last]))
+        amp_open[i] = response_metrics(run(None, omega=om))["peak"]
+        amp_ctrl[i] = response_metrics(run(fuzzy_controller(), omega=om))["peak"]
 
     fig, ax = plt.subplots(figsize=(7.5, 4.6))
     ax.plot(omegas / OMEGA_N, amp_open, color="#d62728", marker="o",
@@ -410,9 +455,7 @@ def plot_frequency_response(fis: MamdaniFIS, figdir: Path) -> None:
 
 
 def main() -> None:
-    np.random.seed(0)
     fis = build_fis()
-
     here = Path(__file__).parent
     figdir = here / "figures"
     figdir.mkdir(parents=True, exist_ok=True)
@@ -422,22 +465,34 @@ def main() -> None:
     plot_mf_forca(figdir)
     plot_rule_base(figdir)
     plot_control_surface(fis, figdir)
-    metrics = plot_simulation(fis, figdir)
-    plot_frequency_response(fis, figdir)
+    metrics = plot_simulation(figdir)
+    plot_frequency_response(figdir)
 
-    print("Plant: m=1 kg, k=100 N/m, zeta=0.02 → omega_n=10 rad/s")
-    print(f"Forcing: F0={F0} N at omega = omega_n (resonance)")
+    # The diagram doubles as a fixture for the block editor. The FIS itself is
+    # still a live object (its terms are closures), so it round-trips as a
+    # `$provide` placeholder until membership functions become declarative.
+    spec_path = save(build_diagram(fuzzy_controller(), name="ex2_sdof_fuzzy"),
+                     here / "diagram.json")
+
+    o, f = metrics["open"], metrics["fuzzy"]
+    print(f"Plant: m={M:g} kg, k={K:g} N/m, zeta={ZETA} → omega_n={OMEGA_N:g} rad/s")
+    print(f"Forcing: F0={F0:g} N at omega = omega_n (resonance)")
+    print(f"Horizon: t_max={T_MAX:g} s (tau={TAU:g} s), "
+          f"metrics over the last {METRIC_WINDOW:g} s")
     print()
-    print("Steady-state response (last 4 s):")
-    print(f"  peak |x|     uncontrolled = {metrics['peak_open']:.4f} m")
-    print(f"  peak |x|     controlled   = {metrics['peak_ctrl']:.4f} m"
-          f"  ({100 * (1 - metrics['peak_ctrl']/metrics['peak_open']):.1f}% reduction)")
-    print(f"  rms  x       uncontrolled = {metrics['rms_open']:.4f} m")
-    print(f"  rms  x       controlled   = {metrics['rms_ctrl']:.4f} m"
-          f"  ({100 * (1 - metrics['rms_ctrl']/metrics['rms_open']):.1f}% reduction)")
-    print(f"  peak |u|                  = {metrics['u_peak']:.4f} N")
+    print(f"Steady-state response (last {METRIC_WINDOW:g} s):")
+    print(f"  peak |x|     uncontrolled = {o['peak']:.4f} m"
+          f"   (analytic F0/(c·omega_n) = {F0 / (C * OMEGA_N):.4f} m)")
+    print(f"  peak |x|     controlled   = {f['peak']:.4f} m"
+          f"  ({100 * (1 - f['peak'] / o['peak']):.1f}% reduction)")
+    print(f"  rms  x       uncontrolled = {o['rms']:.4f} m")
+    print(f"  rms  x       controlled   = {f['rms']:.4f} m"
+          f"  ({100 * (1 - f['rms'] / o['rms']):.1f}% reduction)")
+    print(f"  peak |u|                  = {f['u_peak']:.4f} N"
+          f"   (actuator limit {U_MAX:g} N)")
     print()
     print(f"Figures saved to: {figdir}")
+    print(f"Diagram spec saved to: {spec_path}")
 
 
 if __name__ == "__main__":

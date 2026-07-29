@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phase 1 implemented, 32 unit tests green
+**Status:** accepted — phases 1-3 implemented, 50 unit tests green
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -224,9 +224,9 @@ than being ported twice.
 2. **Declarative spec + registry.** `fuzzy/spec.py`: block registry, per-block parameter
    schema, `Diagram.to_spec()` / `Diagram.from_spec()`, JSON round-trip, layout metadata
    passthrough. Stack-independent, so it is safe to build before the UI stack is chosen.
-3. **Port exercise 2 and the PID comparison**, constructed from a spec so they double as
-   editor fixtures. Exit criterion: metrics reproduce the numbers in §10, *then* fix `t_max`
-   and the `u_peak` mask (§10.1) and regenerate figures and reports.
+3. ~~**Port exercise 2 and the PID comparison.**~~ **Done** — both scripts now build a
+   diagram instead of a bespoke RK4 loop, `diagram.json` is emitted as an editor fixture, and
+   the horizon and `u_peak` mask are fixed. See §10.3.
 4. **Declarative membership functions and rule bases.** The largest remaining piece and a
    hard prerequisite for editing fuzzy controllers in the UI — see §11.3.
 5. **`LQRBlock`, `Observer`, Mermaid figures in the reports.** Unblocks the state-space
@@ -273,8 +273,38 @@ script, on a properly settled horizon (`t_max=40`):
 
 (PID reference: peak `0.0093`, `peak |u| = 0.967`.)
 
-All 12 committed figures currently regenerate bit-identically, so any diff during the
-phase-2 refactor is a real regression signal, not noise.
+All 12 committed figures regenerated bit-identically before the port, so any diff was a
+real regression signal rather than noise.
+
+### 10.3 Phase 3 outcome
+
+Both scripts reproduced every published number at the *old* horizon before any fix landed —
+open `0.2270`, fuzzy `0.0742`, PID `0.0093`, PID `peak |u| 0.967` — confirming the port was
+behaviour-preserving. The horizon and mask fixes then went in, giving:
+
+| Metric | Open loop | Fuzzy | PID |
+| --- | ---: | ---: | ---: |
+| peak \|x\| (m) | 0.2499 | 0.0734 | 0.0093 |
+| rms x (m) | 0.1782 | 0.0521 | 0.0066 |
+| peak \|u\| (N) | — | 0.737 | 0.965 |
+| reduction (peak) | — | 70.6 % | 96.3 % |
+
+The open-loop peak now matches the analytic `F0/(c*omega_n) = 0.2500 m` to four decimals,
+which is the check the old horizon could not pass.
+
+Two smaller findings fell out of the port:
+
+- The old RMS figures (`0.1532`, `0.0526`) were off in the fourth decimal because the
+  hand-rolled loop **accumulated** `t[i+1] = t[i] + dt`, drifting `4.8e-13` by t=12 s — just
+  enough to push the `t >= 8.0` window boundary across a sample and include 800 points
+  instead of 801. `simulate()` recomputes `t = t0 + k*dt`, so the window is exact.
+- The fuzzy `gain` sweep is now a published deliverable (`figures/gain_sweep.png`), and it
+  reverses the comparison report's central conclusion. At gain 10 the same 25-rule controller
+  reaches `0.0102 m` against PID's `0.0093 m` at equal effort, because both end up placing
+  nearly the same closed-loop poles (fuzzy `zeta = 0.327` vs PID `0.456`, from a least-squares
+  fit of `u = -(k1 x + k2 v)` to the control surface). `REPORT_comparison.md` §3.4 and §4.1
+  were rewritten; the claim that the fuzzy limitation was "structural, not implementational"
+  was wrong.
 
 ## 11. What the graphical editor requires from the core
 

@@ -41,7 +41,6 @@ if str(REPO_ROOT) not in sys.path:
 from fuzzy.fis import MamdaniFIS  # noqa: E402
 from fuzzy.membership import left_shoulder, right_shoulder, triangular  # noqa: E402
 
-
 # ----- Membership functions -------------------------------------------------
 
 

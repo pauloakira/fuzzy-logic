@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "name": "ex2_sdof_fuzzy",
+  "blocks": [
+    {
+      "type": "Harmonic",
+      "name": "force",
+      "params": {
+        "amplitude": 1.0,
+        "omega": 10.0,
+        "phase": 0.0
+      },
+      "layout": {
+        "x": 40.0,
+        "y": 40.0
+      }
+    },
+    {
+      "type": "Sum",
+      "name": "total",
+      "params": {
+        "ports": [
+          "ext",
+          "ctrl"
+        ],
+        "signs": [
+          1.0,
+          1.0
+        ]
+      },
+      "layout": {
+        "x": 200.0,
+        "y": 120.0
+      }
+    },
+    {
+      "type": "StateSpacePlant",
+      "name": "plant",
+      "params": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -100.0,
+            -0.4
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ],
+          [
+            0.0
+          ]
+        ],
+        "x0": [
+          0.0,
+          0.0
+        ]
+      },
+      "layout": {
+        "x": 360.0,
+        "y": 120.0
+      }
+    },
+    {
+      "type": "Select",
+      "name": "pos",
+      "params": {
+        "index": 0
+      },
+      "layout": {
+        "x": 520.0,
+        "y": 40.0
+      }
+    },
+    {
+      "type": "Select",
+      "name": "vel",
+      "params": {
+        "index": 1
+      },
+      "layout": {
+        "x": 520.0,
+        "y": 200.0
+      }
+    },
+    {
+      "type": "FISBlock",
+      "name": "controller",
+      "params": {
+        "fis": {
+          "$provide": "controller.fis"
+        },
+        "gain": {
+          "deslocamento": 1.0,
+          "velocidade": 1.0
+        },
+        "clip": {
+          "deslocamento": [
+            -0.3,
+            0.3
+          ],
+          "velocidade": [
+            -3.0,
+            3.0
+          ]
+        },
+        "output_gain": 1.0
+      },
+      "layout": {
+        "x": 680.0,
+        "y": 120.0
+      }
+    },
+    {
+      "type": "Saturation",
+      "name": "actuator",
+      "params": {
+        "lo": -3.0,
+        "hi": 3.0
+      },
+      "layout": {
+        "x": 680.0,
+        "y": 260.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": [
+        "force",
+        "y"
+      ],
+      "to": [
+        "total",
+        "ext"
+      ]
+    },
+    {
+      "from": [
+        "total",
+        "y"
+      ],
+      "to": [
+        "plant",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "plant",
+        "y"
+      ],
+      "to": [
+        "pos",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "plant",
+        "y"
+      ],
+      "to": [
+        "vel",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "pos",
+        "y"
+      ],
+      "to": [
+        "controller",
+        "deslocamento"
+      ]
+    },
+    {
+      "from": [
+        "vel",
+        "y"
+      ],
+      "to": [
+        "controller",
+        "velocidade"
+      ]
+    },
+    {
+      "from": [
+        "controller",
+        "u"
+      ],
+      "to": [
+        "actuator",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "actuator",
+        "y"
+      ],
+      "to": [
+        "total",
+        "ctrl"
+      ]
+    }
+  ]
+}

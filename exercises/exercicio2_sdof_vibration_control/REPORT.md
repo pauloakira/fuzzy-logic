@@ -154,7 +154,9 @@ $$
 
 with $F_\text{ext}(t) = F_0\sin(\omega t)$ and $u(t) = \mathrm{FIS}(x(t),\,\dot x(t))$ fed back from the plant state.
 
-Numerical integration uses fourth-order Runge-Kutta with step $\Delta t = 5$ ms and *zero-order hold* on $u$ — that is, the controller output is held constant over each integration step, modeling the behavior of a real actuator commanded in discrete time.
+The plant, the harmonic excitation, the actuator saturation, and the controller are no longer wired together in a hand-rolled RK4 loop; they are assembled as a block diagram (`fuzzy.sim.Diagram`) and integrated as a single ODE by one fixed-step fourth-order Runge-Kutta integrator, with step $\Delta t = 5$ ms and *zero-order hold* on $u$ — that is, the controller output is held constant over each integration step, modeling the behavior of a real actuator commanded in discrete time. The diagram is saved as `diagram.json` (a spec file) alongside the script.
+
+The metric window itself is now validated automatically: `fuzzy.metrics.steady_state` warns whenever fewer than four time constants of settling precede the averaging window, so an under-settled reference biasing the reported reduction is a class of error that can no longer occur silently.
 
 ---
 
@@ -162,28 +164,30 @@ Numerical integration uses fourth-order Runge-Kutta with step $\Delta t = 5$ ms 
 
 Harmonic excitation at resonance ($\omega = \omega_n = 10$ rad/s) — the most severe case. The system starts from rest, $x(0) = \dot x(0) = 0$.
 
+The simulation horizon is now $t_\text{max} = 40$ s (previously 12 s), long enough for the plant's transient — with time constant $\tau = 1/(\zeta\omega_n) = 5$ s — to settle well before the 4 s metrics window begins. The figure below spans the full 40 s: the uncontrolled envelope is visibly still growing toward its $\approx 0.25$ m asymptote for much of the run, while the shaded band marks the steady-state window used for the metrics in §9.1.
+
 ![Application example — time-domain simulation](figures/simulation.png)
 
 ### 9.1 Steady-state metrics (last 4 s)
 
 | Metric                       | Uncontrolled | Fuzzy-controlled | Reduction |
 | ---------------------------- | -----------: | ---------------: | --------: |
-| Peak $\lvert x \rvert$ (m)   |       0.2270 |           0.0742 |    67.3 % |
-| RMS $x$ (m)                  |       0.1532 |           0.0526 |    65.7 % |
-| Peak $\lvert u \rvert$ (N)   |            — |           0.7443 |         — |
+| Peak $\lvert x \rvert$ (m)   |       0.2499 |           0.0734 |    70.6 % |
+| RMS $x$ (m)                  |       0.1782 |           0.0521 |    70.8 % |
+| Peak $\lvert u \rvert$ (N)   |            — |           0.737 |         — |
 
 ### 9.2 Interpretation
 
-- The uncontrolled system, lightly damped ($\zeta = 0.02$) and at resonance, reaches large amplitude — nearly 23 cm of oscillation around the equilibrium position.
-- With the fuzzy controller active, the steady-state amplitude drops to roughly **one third** of the uncontrolled value.
-- The peak control force ($\approx 0.74$ N) is on the same order as the excitation force ($F_0 = 1$ N) and well below the actuator limit ($U_\text{max} = 3$ N) — there is still margin for more aggressive tuning.
+- The uncontrolled system, lightly damped ($\zeta = 0.02$) and at resonance, reaches large amplitude — nearly 25 cm of oscillation around the equilibrium position. This matches the analytic steady-state value $x_\text{ss} = F_0/(c\,\omega_n) = 0.2500$ m to four decimals, a useful validation of the corrected horizon.
+- With the fuzzy controller active, the steady-state amplitude drops to under **one third** of the uncontrolled value.
+- The peak control force ($\approx 0.737$ N) is on the same order as the excitation force ($F_0 = 1$ N) and well below the actuator limit ($U_\text{max} = 3$ N) — there is still margin for more aggressive tuning.
 - The force $u(t)$ is essentially in phase opposition to $F_\text{ext}(t)$, as expected for active cancellation: detecting the tendency of motion, the controller applies an opposing force at the right time.
 
 ---
 
 ## 10. Frequency response
 
-Sweep between $0.4\,\omega_n$ and $1.8\,\omega_n$, recording the steady-state amplitude in each case:
+Sweep between $0.4\,\omega_n$ and $1.8\,\omega_n$, recording the steady-state amplitude in each case. The sweep now also uses $t_\text{max} = 40$ s per frequency, so the resonance peak is no longer understated by an under-settled window:
 
 ![Frequency response](figures/frequency_response.png)
 
@@ -197,24 +201,25 @@ This is the typical pattern of an active vibration controller: largest benefit a
 
 ## 11. Conclusions
 
-- The Mamdani controller designed **works**: ~67 % reduction in peak and RMS amplitude at resonance, with peak control force well below the actuator limit.
+- The Mamdani controller designed **works**: ~71 % reduction in peak and RMS amplitude at resonance, with peak control force well below the actuator limit.
 - The *phase-plane* structure of the rule base is equivalent to a non-linear PD controller, but with the advantage of **interpretability**: every cell of the 5 × 5 table is justifiable from expert knowledge.
 - The **anti-symmetric control surface** ensures uniform response in both directions; the smoothing introduced by the centroid avoids *bang-bang* behavior.
 - Amplitude reduction could be improved by:
   1. **More linguistic terms** (7 or 9 terms per variable) — would refine the controller's resolution.
   2. **Tuning the input/output scaling gains** — possibly via a genetic algorithm, as in the literature.
   3. **A faster actuator** — in this exercise the controller uses *zero-order hold* at 5 ms, close to a real implementation.
-  4. **A wider force universe** — increasing $U_\text{max}$ would give more authority.
+  4. **The input scaling gains (equivalently, tighter universes of discourse)** — not a wider force universe: the controller peaks at 0.737 N out of the 3 N available, so it is not authority-limited at all. A companion study in `REPORT_comparison.md` shows that raising the input scaling gain to 10 takes the same 25-rule controller to a peak of 0.0102 m at essentially the same control effort (0.968 N) — i.e. within 10 % of PID. Separately, centroid defuzzification means the reachable output range is only $\pm 2.505$ N of the declared $\pm 3$ N, so the saturation limit never actually binds.
 - The choice between Mamdani and Sugeno favored Mamdani here for pedagogical clarity: every rule reads as a sentence, and the physical symmetry of the problem (a vibration controller cannot have directional bias) emerges naturally from the symmetry of the rule map.
 
 ---
 
 ## 12. How to run
 
-From the repository root:
+The repository must be installed once with `pip install -e .` from the repository root (the scripts no longer manipulate `sys.path`). Then, from the repository root:
 
 ```bash
+pip install -e .
 python exercises/exercicio2_sdof_vibration_control/sdof_vibration.py
 ```
 
-The run generates the seven figures in `figures/` and prints the steady-state metrics to the terminal.
+The run generates the seven figures in `figures/` and prints the steady-state metrics to the terminal. Because of the longer 40 s horizon, the run now takes ~35 s.

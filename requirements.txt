@@ -1,4 +1,11 @@
-numpy
-scipy
-matplotlib
-torch
+# Canonical dependency declaration lives in pyproject.toml.
+#
+#   pip install -e .            runtime (numpy, matplotlib)
+#   pip install -e ".[dev]"     + pytest, ruff, mypy
+#   pip install -e ".[anfis]"   + torch (neuro-fuzzy track, not yet used)
+#
+# scipy and torch were listed here but imported nowhere, so a plain install
+# pulled ~2.5 GB of PyTorch for no reason. They are optional extras now.
+#
+# This file exists so `pip install -r requirements.txt` still works.
+-e .
