@@ -15,8 +15,9 @@ multi-rate sample-time propagation.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -70,6 +71,9 @@ class Diagram:
 
     def __init__(self, name: str = "diagram") -> None:
         self.name = name
+        self.layout: dict[str, dict[str, float]] = {}
+        """Canvas positions per block name. Ignored by the simulator; preserved
+        across spec round-trips so a graphical editor can own it."""
         self._blocks: list[Block] = []
         self._conns: dict[tuple[Block, str], tuple[Block, str]] = {}
         self._order: list[Block] | None = None
@@ -172,6 +176,18 @@ class Diagram:
     def blocks(self) -> tuple[Block, ...]:
         return tuple(self._blocks)
 
+    def block(self, name: str) -> Block:
+        for b in self._blocks:
+            if b.name == name:
+                return b
+        raise KeyError(f"no block named {name!r}")
+
+    def connections(self) -> list[tuple[tuple[str, str], tuple[str, str]]]:
+        """Wiring as `((src_block, src_port), (dst_block, dst_port))` name pairs."""
+        return [
+            ((sb.name, sp), (db.name, dp)) for (db, dp), (sb, sp) in self._conns.items()
+        ]
+
     # -- state --
 
     def _layout(self) -> list[tuple[Block, slice]]:
@@ -196,9 +212,7 @@ class Diagram:
 
     # -- evaluation --
 
-    def _gather(
-        self, b: Block, out: Mapping[tuple[Block, str], Any]
-    ) -> dict[str, Any]:
+    def _gather(self, b: Block, out: Mapping[tuple[Block, str], Any]) -> dict[str, Any]:
         u = {}
         for p in b.inputs:
             src = self._conns[(b, p)]
@@ -220,9 +234,7 @@ class Diagram:
         ins = {b: self._gather(b, out) for b in self._blocks}
         return out, ins
 
-    def derivative(
-        self, t: float, z: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
+    def derivative(self, t: float, z: NDArray[np.float64]) -> NDArray[np.float64]:
         """The whole diagram as a single ODE right-hand side."""
         _, ins = self.evaluate(t, z)
         dz = np.zeros_like(z)
@@ -264,7 +276,8 @@ class Diagram:
             shape = "[/{}\\]" if not b.inputs else ("([{}])" if b.discrete else "[{}]")
             lines.append(f"    {b.name}{shape.format(b.name)}")
         for (db, dp), (sb, sp) in self._conns.items():
-            label = f"|{sp}→{dp}|" if (len(sb.outputs) > 1 or len(db.inputs) > 1) else ""
+            named = len(sb.outputs) > 1 or len(db.inputs) > 1
+            label = f"|{sp}→{dp}|" if named else ""
             lines.append(f"    {sb.name} -->{label} {db.name}")
         return "\n".join(lines)
 

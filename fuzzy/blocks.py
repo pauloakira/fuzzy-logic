@@ -16,7 +16,8 @@ See `docs/design-block-diagram-simulation.md` for the rationale.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -151,13 +152,15 @@ class Sum(Block):
         name: str | None = None,
     ) -> None:
         super().__init__(name)
+        self.ports = tuple(ports)  # kept under its parameter name so specs round-trip
         self.inputs = tuple(ports)
         self.signs = tuple(signs) if signs is not None else (1.0,) * len(self.inputs)
         if len(self.signs) != len(self.inputs):
             raise ValueError("`signs` must match `ports` in length")
 
     def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, Any]:
-        return {"y": sum(s * u[p] for s, p in zip(self.signs, self.inputs))}
+        pairs = zip(self.signs, self.inputs, strict=True)
+        return {"y": sum(s * u[p] for s, p in pairs)}
 
 
 class Select(Block):
