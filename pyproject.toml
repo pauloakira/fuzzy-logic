@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuzzy-logic"
+version = "0.1.0"
+description = "Fuzzy inference systems, neuro-fuzzy models, and a block-diagram simulation core"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "matplotlib>=3.8"]
+
+[project.optional-dependencies]
+# ANFIS work has not started; torch is not needed to run anything in the repo today.
+anfis = ["torch>=2.2"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.setuptools]
+packages = ["fuzzy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::UserWarning"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["fuzzy"]
+ignore_missing_imports = true
