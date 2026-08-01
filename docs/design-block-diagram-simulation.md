@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-5 implemented, 135 tests green, CI on 3.11/3.12/3.13
+**Status:** accepted — phases 1-6 implemented, 142 tests green, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -234,8 +234,10 @@ than being ported twice.
    (`lqr`, `observer_gain`, `solve_care` by the Hamiltonian method, no SciPy), the `Observer`
    block, and `to_mermaid()` wired into `REPORT.md` §8.1 with drift tests. `StateFeedback`
    carries LQR gains, so `LQRBlock` never needed to exist as a separate type.
-6. **Exercise 1** refactor, together with its V/s-vs-rpm/s unit fix and the equilibrium
-   claims. Separate change — it has report corrections entangled with it.
+6. ~~**Exercise 1** refactor, unit fix, equilibrium claims.~~ **Done** — non-LTI plant as a
+   local `MotorPlant` block, output relabelled V/s, §6 diagonal-equilibrium claim and §9/§10
+   convergence claim corrected, Euler -> RK4. Also fixed a false positive in
+   `_check_discrete_chain` it exposed.
 7. **The editor itself.** Stack decision deferred to §11.6.
 
 ## 10. Validation
