@@ -367,6 +367,67 @@ class PIDBlock(Block):
         return {"u": self._held}
 
 
+class Observer(Block):
+    """Luenberger / Kalman state estimator.
+
+    `x̂' = A x̂ + B u + L (y - C x̂)`, output `x̂`.
+
+    This is what removes the biggest idealisation in the vibration exercise: the
+    controller is handed perfect velocity, which no real displacement sensor
+    provides. With an observer in the loop it sees only what `C` measures and
+    reconstructs the rest, so the estimation error becomes part of the result
+    rather than being assumed away.
+
+    Continuous state, so it integrates with the plant as part of the one ODE.
+
+    Wire the `y` port through an explicit sensor — `Gain(C)` — rather than
+    straight off the plant. `StateSpacePlant` emits its full state by default,
+    and feeding that in would hand the observer the very quantity it exists to
+    estimate.
+    """
+
+    inputs = ("y", "u")
+    outputs = ("xhat",)
+
+    def __init__(
+        self,
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        L: ArrayLike,
+        x0: ArrayLike | None = None,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(name)
+        self.A = np.atleast_2d(np.asarray(A, dtype=float))
+        n = self.A.shape[0]
+        self.B = np.asarray(B, dtype=float).reshape(n, -1)
+        self.C = np.atleast_2d(np.asarray(C, dtype=float))
+        self.L = np.asarray(L, dtype=float).reshape(n, self.C.shape[0])
+        self.x0 = np.zeros(n) if x0 is None else np.asarray(x0, dtype=float).ravel()
+        if self.x0.size != n:
+            raise ValueError(f"`x0` must have length {n}")
+        self.n_states = n
+        self.feedthrough = False  # output is the estimate, not a function of inputs
+
+    def initial_state(self) -> NDArray[np.float64]:
+        return self.x0.copy()
+
+    def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, Any]:
+        return {"xhat": x}
+
+    def derivative(
+        self, t: float, x: NDArray[np.float64], u: Inputs
+    ) -> NDArray[np.float64]:
+        y = np.atleast_1d(np.asarray(u["y"], dtype=float))
+        uu = np.atleast_1d(np.asarray(u["u"], dtype=float))
+        innovation = y - self.C @ x
+        return self.A @ x + (self.B @ uu).ravel() + (self.L @ innovation).ravel()
+
+    def eigenvalues(self) -> NDArray[np.complex128]:
+        return np.linalg.eigvals(self.A - self.L @ self.C)
+
+
 class StateFeedback(Block):
     """Sampled `u = -K z` — LQR or pole-placement gains."""
 

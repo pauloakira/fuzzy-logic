@@ -45,6 +45,7 @@ from fuzzy.blocks import (
     FISBlock,
     Gain,
     Harmonic,
+    Observer,
     PIDBlock,
     Saturation,
     Select,
@@ -99,6 +100,7 @@ for _t in (
     FISBlock,
     PIDBlock,
     StateFeedback,
+    Observer,
 ):
     register(_t)
 
