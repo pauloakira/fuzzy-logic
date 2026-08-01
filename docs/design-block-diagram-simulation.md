@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-4 implemented, 100 unit tests green
+**Status:** accepted — phases 1-5 implemented, 135 tests green, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -230,8 +230,10 @@ than being ported twice.
 4. ~~**Declarative membership functions and rule bases.**~~ **Done** — `Term`, `Variable`,
    `Rule`, `RuleBase`, and `FISSpec`. `FISBlock` now serialises with no placeholder, so a
    diagram file describes its controller completely. See §10.4 and §11.3.
-5. **`LQRBlock`, `Observer`, Mermaid figures in the reports.** Unblocks the state-space
-   follow-ups.
+5. ~~**`LQRBlock`, `Observer`, Mermaid figures in the reports.**~~ **Done** — `fuzzy/lti.py`
+   (`lqr`, `observer_gain`, `solve_care` by the Hamiltonian method, no SciPy), the `Observer`
+   block, and `to_mermaid()` wired into `REPORT.md` §8.1 with drift tests. `StateFeedback`
+   carries LQR gains, so `LQRBlock` never needed to exist as a separate type.
 6. **Exercise 1** refactor, together with its V/s-vs-rpm/s unit fix and the equilibrium
    claims. Separate change — it has report corrections entangled with it.
 7. **The editor itself.** Stack decision deferred to §11.6.
