@@ -181,6 +181,53 @@ def test_missing_provided_object_raises_with_the_key_to_pass():
         from_spec(to_spec(d))
 
 
+def test_fis_spec_serialises_fully_with_no_placeholder():
+    """A FISSpec-backed controller needs nothing supplied at load time."""
+    from fuzzy.blocks import FISBlock
+    from fuzzy.fis import FISSpec
+    from fuzzy.membership import Variable
+    from fuzzy.rules import RuleBase
+
+    terms = ["NG", "Z", "PG"]
+    fspec = FISSpec(
+        inputs={"e": Variable.partition("e", -1.0, 1.0, terms)},
+        output=Variable.partition("u", -1.0, 1.0, terms),
+        rules=RuleBase.from_table("e", "e", terms, terms, [[t] * 3 for t in terms]),
+    )
+    d = Diagram(name="fis_spec")
+    block = FISBlock(fspec, name="fis")
+    d.connect(sdof_plant(M, C, K, name="plant"), Select(0, name="pos"))
+    d.connect(d.block("pos"), (block, "e"))
+    d.connect(block, d.block("plant"))
+
+    spec = to_spec(d)
+    assert "$provide" not in json.dumps(spec)
+
+    rebuilt = from_spec(spec)  # no objects= needed
+    loaded = rebuilt.block("fis")
+    for x in (-0.9, -0.2, 0.0, 0.4, 0.8):
+        args = {"e": x}
+        assert loaded._engine.evaluate(args) == block._engine.evaluate(args)
+
+
+def test_fis_block_accepts_a_plain_dict():
+    """Loading a spec hands the block a dict; it coerces to FISSpec itself."""
+    from fuzzy.blocks import FISBlock
+    from fuzzy.fis import FISSpec
+    from fuzzy.membership import Variable
+    from fuzzy.rules import RuleBase
+
+    terms = ["NG", "Z", "PG"]
+    fspec = FISSpec(
+        inputs={"e": Variable.partition("e", -1.0, 1.0, terms)},
+        output=Variable.partition("u", -1.0, 1.0, terms),
+        rules=RuleBase.from_table("e", "e", terms, terms, [[t] * 3 for t in terms]),
+    )
+    from_dict = FISBlock(fspec.to_spec(), name="fis")
+    assert isinstance(from_dict.fis, FISSpec)
+    assert from_dict._engine.evaluate({"e": 0.5}) == fspec.build().evaluate({"e": 0.5})
+
+
 def test_provided_object_completes_the_round_trip():
     d, S = fis_diagram()
     rebuilt = from_spec(to_spec(d), objects={"fis.fis": S.build_fis()})

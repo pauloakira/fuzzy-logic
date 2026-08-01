@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from fuzzy.defuzz import centroid
+from fuzzy.membership import Variable
+from fuzzy.rules import RuleBase
 
 MembershipFn = Callable[[ArrayLike], NDArray[np.float64]]
 Antecedents = Mapping[str, str]
@@ -69,3 +72,82 @@ class MamdaniFIS:
             strengths.append(float(strength))
         crisp = centroid(self.output_universe, aggregated)
         return crisp, aggregated, memberships, strengths
+
+
+@dataclass
+class FISSpec:
+    """A complete Mamdani controller described as data.
+
+    `MamdaniFIS` holds membership *callables*, which is right for inference but
+    cannot be saved, inspected, or edited. `FISSpec` holds `Variable`s and a
+    `RuleBase` instead, and `build()` turns it into a `MamdaniFIS`. Because
+    `Term` is callable and `Rule` is a `(antecedents, consequent)` NamedTuple,
+    the built FIS is indistinguishable from a hand-wired one.
+    """
+
+    inputs: Mapping[str, Variable]
+    output: Variable
+    rules: RuleBase
+    resolution: int = 401
+
+    def term_names(self) -> dict[str, list[str]]:
+        return {name: list(var.terms) for name, var in self.inputs.items()}
+
+    def validate(self) -> list[str]:
+        """Problems with this controller; empty means valid.
+
+        Covers rule references, rule-base completeness, and whether each variable
+        is a strong partition — the three things a hand-edited controller most
+        often gets wrong.
+        """
+        problems = self.rules.validate(self.term_names(), list(self.output.terms))
+        covered = self.rules.coverage(self.term_names())
+        if covered < 1.0:
+            problems.append(
+                f"rule base covers {covered:.0%} of input term combinations; "
+                f"uncovered inputs fall back to the universe midpoint"
+            )
+        for var in (*self.inputs.values(), self.output):
+            err = var.partition_error()
+            if err > 1e-9:
+                problems.append(
+                    f"{var.name!r} is not a strong partition "
+                    f"(memberships deviate from 1 by up to {err:.3f})"
+                )
+        return problems
+
+    def build(self, strict: bool = True) -> MamdaniFIS:
+        """Instantiate the inference system. `strict` raises on any problem."""
+        if strict:
+            problems = self.rules.validate(
+                self.term_names(), list(self.output.terms)
+            )
+            if problems:
+                raise ValueError(
+                    "invalid rule base:\n  " + "\n  ".join(problems)
+                )
+        return MamdaniFIS(
+            inputs={n: dict(v.terms) for n, v in self.inputs.items()},
+            output_terms=dict(self.output.terms),
+            output_universe=self.output.universe(self.resolution),
+            rules=list(self.rules),
+        )
+
+    def to_spec(self) -> dict[str, Any]:
+        return {
+            "inputs": {n: v.to_spec() for n, v in self.inputs.items()},
+            "output": self.output.to_spec(),
+            "rules": self.rules.to_spec(),
+            "resolution": self.resolution,
+        }
+
+    @classmethod
+    def from_spec(cls, data: Mapping[str, Any]) -> FISSpec:
+        return cls(
+            inputs={
+                n: Variable.from_spec(v) for n, v in data["inputs"].items()
+            },
+            output=Variable.from_spec(data["output"]),
+            rules=RuleBase.from_spec(data["rules"]),
+            resolution=int(data.get("resolution", 401)),
+        )

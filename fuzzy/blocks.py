@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from fuzzy.fis import MamdaniFIS
+from fuzzy.fis import FISSpec, MamdaniFIS
 
 Inputs = Mapping[str, Any]
 
@@ -281,15 +281,21 @@ class FISBlock(Block):
 
     def __init__(
         self,
-        fis: MamdaniFIS,
+        fis: FISSpec | MamdaniFIS | Mapping[str, Any],
         gain: Mapping[str, float] | None = None,
         clip: Mapping[str, tuple[float, float]] | None = None,
         output_gain: float = 1.0,
         name: str | None = None,
     ) -> None:
         super().__init__(name)
+        # A FISSpec (or its serialised form) round-trips through a spec file; a
+        # bare MamdaniFIS still works but is opaque to `fuzzy.spec`, so it saves
+        # as a `$provide` placeholder that must be supplied at load time.
+        if isinstance(fis, Mapping):
+            fis = FISSpec.from_spec(fis)
         self.fis = fis
-        self.inputs = tuple(fis.inputs)
+        self._engine = fis.build() if isinstance(fis, FISSpec) else fis
+        self.inputs = tuple(self._engine.inputs)
         self.gain = dict(gain or {})
         self.clip = dict(clip or {})
         self.output_gain = float(output_gain)
@@ -305,7 +311,7 @@ class FISBlock(Block):
             if var in self.clip:
                 v = float(np.clip(v, *self.clip[var]))
             values[var] = v
-        self._held = self.output_gain * self.fis.evaluate(values)
+        self._held = self.output_gain * self._engine.evaluate(values)
 
     def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, Any]:
         return {"u": self._held}

@@ -151,6 +151,12 @@ class _Opaque(Exception):
 
 
 def _jsonify(value: Any) -> Any:
+    # Rich objects that can describe themselves as data (FISSpec, Variable, Term,
+    # RuleBase) serialise through their own `to_spec`. The owning block coerces
+    # the dict back to the rich type in its constructor.
+    to_spec = getattr(value, "to_spec", None)
+    if callable(to_spec):
+        return _jsonify(to_spec())
     if isinstance(value, np.ndarray):
         return _jsonify(value.tolist())
     if isinstance(value, (np.floating, np.integer)):

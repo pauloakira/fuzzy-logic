@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-3 implemented, 50 unit tests green
+**Status:** accepted — phases 1-4 implemented, 84 unit tests green
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -227,8 +227,9 @@ than being ported twice.
 3. ~~**Port exercise 2 and the PID comparison.**~~ **Done** — both scripts now build a
    diagram instead of a bespoke RK4 loop, `diagram.json` is emitted as an editor fixture, and
    the horizon and `u_peak` mask are fixed. See §10.3.
-4. **Declarative membership functions and rule bases.** The largest remaining piece and a
-   hard prerequisite for editing fuzzy controllers in the UI — see §11.3.
+4. ~~**Declarative membership functions and rule bases.**~~ **Done** — `Term`, `Variable`,
+   `Rule`, `RuleBase`, and `FISSpec`. `FISBlock` now serialises with no placeholder, so a
+   diagram file describes its controller completely. See §10.4 and §11.3.
 5. **`LQRBlock`, `Observer`, Mermaid figures in the reports.** Unblocks the state-space
    follow-ups.
 6. **Exercise 1** refactor, together with its V/s-vs-rpm/s unit fix and the equilibrium
@@ -306,6 +307,23 @@ Two smaller findings fell out of the port:
   were rewritten; the claim that the fuzzy limitation was "structural, not implementational"
   was wrong.
 
+### 10.4 Phase 4 outcome
+
+Terms and rules became data (§11.3) with no change to the inference code. Verified against
+the closure-built controller it replaces:
+
+- Control surface agrees to `1.3e-15` over 3721 points. Not bit-identical: `Variable.partition`
+  spaces centres with `linspace` where the old code used `high - quarter`, and those disagree
+  by one ulp (`2.8e-17`) on the `PP` breakpoint. `control_surface.png` shifted by a hair as a
+  result; every closed-loop figure is byte-identical.
+- Every published metric is unchanged — open `0.2499`, fuzzy `0.0734`, PID `0.0093`, and the
+  whole gain sweep. Phase 4 changed how the controller is *described*, not what it does.
+- `diagram.json` now contains zero `$provide` placeholders. The full controller — 2 input
+  variables, 25 rules, output universe — loads from an 11 KB file with nothing supplied at
+  runtime, and reproduces the in-memory diagram to `0.0e+00`.
+
+`fuzzy/rules.py`, an empty docstring since the repo was scaffolded, is now a real module.
+
 ## 11. What the graphical editor requires from the core
 
 The canvas is phase 7, but it constrains phases 2–4, so the requirements are recorded now.
@@ -340,28 +358,56 @@ using the imperative API where it is more pleasant; both produce the same object
 type, default, units, bounds) so the editor renders a property panel generically instead of
 hardcoding a form per block. Adding a block should make it appear in the palette for free.
 
-### 11.3 Declarative membership functions and rule bases
+### 11.3 Declarative membership functions and rule bases — delivered
 
-This is the real work, and it is the reason phase 4 exists. Today a term is an opaque
-closure built inline in each exercise:
+A term used to be an opaque closure, which could not be saved, inspected, or edited:
 
 ```python
 "NG": lambda x: left_shoulder(x, -0.3, -0.15)
 ```
 
-A closure cannot be serialised, inspected, or edited. Terms must become data —
-`{"type": "left_shoulder", "params": [-0.3, -0.15]}` — with `MamdaniFIS` constructible from
-that description. Same for the rule base: the 5×5 table is currently built by a Python loop
-over `TERM_ORDER`, and the editor needs it as an addressable grid.
+It is now data, in four layers:
 
-This also pays off outside the UI: it is what makes `fuzzy/rules.py` (still an empty
-docstring) a real module, and it removes the per-exercise MF boilerplate the audit flagged.
+| Type | Module | Role |
+| --- | --- | --- |
+| `Term(kind, params)` | `membership.py` | one MF, named by kind against `MF_REGISTRY` |
+| `Variable(name, low, high, terms)` | `membership.py` | a linguistic variable over a universe |
+| `Rule(antecedents, consequent)` / `RuleBase` | `rules.py` | the rule base, with grid projection |
+| `FISSpec(inputs, output, rules, resolution)` | `fis.py` | the whole controller |
+
+```json
+{"kind": "left_shoulder", "params": [-0.3, -0.15]}
+{"if": {"deslocamento": "NG", "velocidade": "NG"}, "then": "PG"}
+```
+
+Two decisions kept this from touching the inference code at all:
+
+- **`Term` is callable.** It drops in wherever a membership callable was accepted, so
+  `MamdaniFIS` is unchanged.
+- **`Rule` is a `NamedTuple`** of `(antecedents, consequent)` — exactly the shape
+  `MamdaniFIS` already unpacks, so a `RuleBase` is directly usable as `rules`.
+
+`FISSpec.build()` produces the `MamdaniFIS`. `FISBlock` accepts a `FISSpec`, a raw
+`MamdaniFIS` (still supported, still opaque, still saves as `$provide`), or a plain dict,
+which it coerces itself — so blocks own the conversion and `fuzzy/spec.py` needs no
+per-type special-casing beyond honouring a `to_spec()` method.
+
+`Variable.partition()` generalises the old hand-written five-term layout to any term count,
+so refining a controller from 5 to 7 or 9 terms — listed as future work in `REPORT.md` §11 —
+is now a one-argument change.
 
 ### 11.4 Machine-readable validation
 
 `WiringError` and `AlgebraicLoopError` currently carry human-readable strings. The canvas
 needs to highlight the offending node, so they must also carry structured references to the
-blocks and ports involved.
+blocks and ports involved. **Still outstanding for the diagram layer.**
+
+The FIS layer is done: `RuleBase.validate()` and `FISSpec.validate()` return a *list* of
+problems rather than raising on the first, so an editor can highlight every offending rule at
+once. `RuleBase.coverage()` reports the fraction of the input term cross-product that fires
+any rule (below 1 means some inputs fall through to the defuzzifier's midpoint fallback), and
+`Variable.partition_error()` reports how far memberships stray from summing to 1 — the two
+mistakes a hand-edited controller most often makes.
 
 ### 11.5 Layout metadata
 

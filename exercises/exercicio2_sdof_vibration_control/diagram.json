@@ -110,7 +110,321 @@
       "name": "controller",
       "params": {
         "fis": {
-          "$provide": "controller.fis"
+          "inputs": {
+            "deslocamento": {
+              "name": "deslocamento",
+              "low": -0.3,
+              "high": 0.3,
+              "terms": {
+                "NG": {
+                  "kind": "left_shoulder",
+                  "params": [
+                    -0.3,
+                    -0.15
+                  ]
+                },
+                "NP": {
+                  "kind": "triangular",
+                  "params": [
+                    -0.3,
+                    -0.15,
+                    0.0
+                  ]
+                },
+                "Z": {
+                  "kind": "triangular",
+                  "params": [
+                    -0.15,
+                    0.0,
+                    0.14999999999999997
+                  ]
+                },
+                "PP": {
+                  "kind": "triangular",
+                  "params": [
+                    0.0,
+                    0.14999999999999997,
+                    0.3
+                  ]
+                },
+                "PG": {
+                  "kind": "right_shoulder",
+                  "params": [
+                    0.14999999999999997,
+                    0.3
+                  ]
+                }
+              }
+            },
+            "velocidade": {
+              "name": "velocidade",
+              "low": -3.0,
+              "high": 3.0,
+              "terms": {
+                "NG": {
+                  "kind": "left_shoulder",
+                  "params": [
+                    -3.0,
+                    -1.5
+                  ]
+                },
+                "NP": {
+                  "kind": "triangular",
+                  "params": [
+                    -3.0,
+                    -1.5,
+                    0.0
+                  ]
+                },
+                "Z": {
+                  "kind": "triangular",
+                  "params": [
+                    -1.5,
+                    0.0,
+                    1.5
+                  ]
+                },
+                "PP": {
+                  "kind": "triangular",
+                  "params": [
+                    0.0,
+                    1.5,
+                    3.0
+                  ]
+                },
+                "PG": {
+                  "kind": "right_shoulder",
+                  "params": [
+                    1.5,
+                    3.0
+                  ]
+                }
+              }
+            }
+          },
+          "output": {
+            "name": "forca",
+            "low": -3.0,
+            "high": 3.0,
+            "terms": {
+              "NG": {
+                "kind": "left_shoulder",
+                "params": [
+                  -3.0,
+                  -1.5
+                ]
+              },
+              "NP": {
+                "kind": "triangular",
+                "params": [
+                  -3.0,
+                  -1.5,
+                  0.0
+                ]
+              },
+              "Z": {
+                "kind": "triangular",
+                "params": [
+                  -1.5,
+                  0.0,
+                  1.5
+                ]
+              },
+              "PP": {
+                "kind": "triangular",
+                "params": [
+                  0.0,
+                  1.5,
+                  3.0
+                ]
+              },
+              "PG": {
+                "kind": "right_shoulder",
+                "params": [
+                  1.5,
+                  3.0
+                ]
+              }
+            }
+          },
+          "rules": [
+            {
+              "if": {
+                "deslocamento": "NG",
+                "velocidade": "NG"
+              },
+              "then": "PG"
+            },
+            {
+              "if": {
+                "deslocamento": "NP",
+                "velocidade": "NG"
+              },
+              "then": "PG"
+            },
+            {
+              "if": {
+                "deslocamento": "Z",
+                "velocidade": "NG"
+              },
+              "then": "PG"
+            },
+            {
+              "if": {
+                "deslocamento": "PP",
+                "velocidade": "NG"
+              },
+              "then": "PP"
+            },
+            {
+              "if": {
+                "deslocamento": "PG",
+                "velocidade": "NG"
+              },
+              "then": "Z"
+            },
+            {
+              "if": {
+                "deslocamento": "NG",
+                "velocidade": "NP"
+              },
+              "then": "PG"
+            },
+            {
+              "if": {
+                "deslocamento": "NP",
+                "velocidade": "NP"
+              },
+              "then": "PP"
+            },
+            {
+              "if": {
+                "deslocamento": "Z",
+                "velocidade": "NP"
+              },
+              "then": "PP"
+            },
+            {
+              "if": {
+                "deslocamento": "PP",
+                "velocidade": "NP"
+              },
+              "then": "Z"
+            },
+            {
+              "if": {
+                "deslocamento": "PG",
+                "velocidade": "NP"
+              },
+              "then": "NP"
+            },
+            {
+              "if": {
+                "deslocamento": "NG",
+                "velocidade": "Z"
+              },
+              "then": "PG"
+            },
+            {
+              "if": {
+                "deslocamento": "NP",
+                "velocidade": "Z"
+              },
+              "then": "PP"
+            },
+            {
+              "if": {
+                "deslocamento": "Z",
+                "velocidade": "Z"
+              },
+              "then": "Z"
+            },
+            {
+              "if": {
+                "deslocamento": "PP",
+                "velocidade": "Z"
+              },
+              "then": "NP"
+            },
+            {
+              "if": {
+                "deslocamento": "PG",
+                "velocidade": "Z"
+              },
+              "then": "NG"
+            },
+            {
+              "if": {
+                "deslocamento": "NG",
+                "velocidade": "PP"
+              },
+              "then": "PP"
+            },
+            {
+              "if": {
+                "deslocamento": "NP",
+                "velocidade": "PP"
+              },
+              "then": "Z"
+            },
+            {
+              "if": {
+                "deslocamento": "Z",
+                "velocidade": "PP"
+              },
+              "then": "NP"
+            },
+            {
+              "if": {
+                "deslocamento": "PP",
+                "velocidade": "PP"
+              },
+              "then": "NP"
+            },
+            {
+              "if": {
+                "deslocamento": "PG",
+                "velocidade": "PP"
+              },
+              "then": "NG"
+            },
+            {
+              "if": {
+                "deslocamento": "NG",
+                "velocidade": "PG"
+              },
+              "then": "Z"
+            },
+            {
+              "if": {
+                "deslocamento": "NP",
+                "velocidade": "PG"
+              },
+              "then": "NP"
+            },
+            {
+              "if": {
+                "deslocamento": "Z",
+                "velocidade": "PG"
+              },
+              "then": "NG"
+            },
+            {
+              "if": {
+                "deslocamento": "PP",
+                "velocidade": "PG"
+              },
+              "then": "NG"
+            },
+            {
+              "if": {
+                "deslocamento": "PG",
+                "velocidade": "PG"
+              },
+              "then": "NG"
+            }
+          ],
+          "resolution": 401
         },
         "gain": {
           "deslocamento": 1.0,

@@ -63,9 +63,10 @@ from fuzzy.blocks import (
     Sum,
     sdof_plant,
 )
-from fuzzy.fis import MamdaniFIS
-from fuzzy.membership import left_shoulder, right_shoulder, triangular
+from fuzzy.fis import FISSpec, MamdaniFIS
+from fuzzy.membership import Variable
 from fuzzy.metrics import steady_state
+from fuzzy.rules import RuleBase
 from fuzzy.sim import Diagram, Log, simulate
 from fuzzy.spec import save
 
@@ -91,50 +92,23 @@ METRIC_WINDOW = 4.0         # s — trailing window used for steady-state metric
 TAU = 1.0 / (ZETA * OMEGA_N)  # s — open-loop transient decay time constant
 
 
-# ----- Membership functions -------------------------------------------------
+# ----- Linguistic variables -------------------------------------------------
 
+# `Variable.partition` builds the standard strong partition: linear shoulders at
+# the ends, triangles between, centres evenly spaced, neighbours meeting at
+# half-membership so memberships sum to exactly 1 everywhere. Terms are data, not
+# closures, so the controller can be saved, validated, and edited.
+TERM_ORDER = ["NG", "NP", "Z", "PP", "PG"]
 
-def _five_term_partition(low: float, high: float) -> dict:
-    """Build five MFs (NG, NP, Z, PP, PG) over [low, high].
-
-    NG and PG are linear shoulders; NP, Z, PP are triangulars centered at
-    -X/2, 0, X/2. Each term overlaps its neighbors at half-membership.
-    """
-    quarter = 0.25 * (high - low)
-    c_ng = low
-    c_np = low + quarter
-    c_z = 0.5 * (low + high)
-    c_pp = high - quarter
-    c_pg = high
-
-    def NG(x):
-        return left_shoulder(x, c_ng, c_np)
-
-    def NP(x):
-        return triangular(x, c_ng, c_np, c_z)
-
-    def Z(x):
-        return triangular(x, c_np, c_z, c_pp)
-
-    def PP(x):
-        return triangular(x, c_z, c_pp, c_pg)
-
-    def PG(x):
-        return right_shoulder(x, c_pp, c_pg)
-
-    return {"NG": NG, "NP": NP, "Z": Z, "PP": PP, "PG": PG}
-
-
-DISP_TERMS = _five_term_partition(-X_MAX, X_MAX)
-VEL_TERMS = _five_term_partition(-V_MAX, V_MAX)
-FORCE_TERMS = _five_term_partition(-U_MAX, U_MAX)
+DISP = Variable.partition("deslocamento", -X_MAX, X_MAX, TERM_ORDER)
+VEL = Variable.partition("velocidade", -V_MAX, V_MAX, TERM_ORDER)
+FORCE = Variable.partition("forca", -U_MAX, U_MAX, TERM_ORDER)
 
 
 # ----- Rule base ------------------------------------------------------------
 
 # Phase-plane rule base. Rows: velocidade. Columns: deslocamento.
 # Read: when velocidade and deslocamento are both PG, force is NG (push back).
-TERM_ORDER = ["NG", "NP", "Z", "PP", "PG"]
 RULE_TABLE = [
     # x:  NG    NP    Z     PP    PG
     [    "PG", "PG", "PG", "PP", "Z"],   # v = NG
@@ -144,31 +118,30 @@ RULE_TABLE = [
     [    "Z",  "NP", "NG", "NG", "NG"],  # v = PG
 ]
 
-INPUTS = {
-    "deslocamento": DISP_TERMS,
-    "velocidade": VEL_TERMS,
-}
-OUTPUT_UNIVERSE = np.linspace(-U_MAX, U_MAX, 401)
+RULES = RuleBase.from_table(
+    row_var="velocidade",
+    col_var="deslocamento",
+    row_terms=TERM_ORDER,
+    col_terms=TERM_ORDER,
+    table=RULE_TABLE,
+)
+
+OUTPUT_RESOLUTION = 401
 
 
-def _build_rules() -> list:
-    rules = []
-    for i, vel_term in enumerate(TERM_ORDER):
-        for j, disp_term in enumerate(TERM_ORDER):
-            cons = RULE_TABLE[i][j]
-            rules.append(
-                ({"deslocamento": disp_term, "velocidade": vel_term}, cons)
-            )
-    return rules
+def build_fis_spec() -> FISSpec:
+    """The controller as data — serialisable, validatable, editable."""
+    return FISSpec(
+        inputs={"deslocamento": DISP, "velocidade": VEL},
+        output=FORCE,
+        rules=RULES,
+        resolution=OUTPUT_RESOLUTION,
+    )
 
 
 def build_fis() -> MamdaniFIS:
-    return MamdaniFIS(
-        inputs=INPUTS,
-        output_terms=FORCE_TERMS,
-        output_universe=OUTPUT_UNIVERSE,
-        rules=_build_rules(),
-    )
+    """The runnable inference system built from the spec."""
+    return build_fis_spec().build()
 
 
 # ----- Block diagram --------------------------------------------------------
@@ -195,7 +168,7 @@ def fuzzy_controller(gain: float = 1.0, name: str = "controller") -> FISBlock:
     a state-feedback gain vector `K`.
     """
     return FISBlock(
-        build_fis(),
+        build_fis_spec(),
         gain={port: gain for port in FUZZY_PORTS},
         clip={FUZZY_PORTS[0]: (-X_MAX, X_MAX), FUZZY_PORTS[1]: (-V_MAX, V_MAX)},
         name=name,
@@ -287,7 +260,7 @@ def _plot_terms(ax, terms_dict, low, high, title, xlabel, ylabel):
 def plot_mf_deslocamento(figdir: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 3.5))
     _plot_terms(
-        ax, DISP_TERMS, -X_MAX, X_MAX,
+        ax, DISP.terms, -X_MAX, X_MAX,
         "Variável de entrada: deslocamento",
         "x (m)", r"$\mu(x)$",
     )
@@ -299,7 +272,7 @@ def plot_mf_deslocamento(figdir: Path) -> None:
 def plot_mf_velocidade(figdir: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 3.5))
     _plot_terms(
-        ax, VEL_TERMS, -V_MAX, V_MAX,
+        ax, VEL.terms, -V_MAX, V_MAX,
         "Variável de entrada: velocidade",
         r"$\dot x$ (m/s)", r"$\mu(\dot x)$",
     )
@@ -311,7 +284,7 @@ def plot_mf_velocidade(figdir: Path) -> None:
 def plot_mf_forca(figdir: Path) -> None:
     fig, ax = plt.subplots(figsize=(7, 3.5))
     _plot_terms(
-        ax, FORCE_TERMS, -U_MAX, U_MAX,
+        ax, FORCE.terms, -U_MAX, U_MAX,
         "Variável de saída: força de controle",
         "u (N)", r"$\mu(u)$",
     )
@@ -322,14 +295,17 @@ def plot_mf_forca(figdir: Path) -> None:
 
 def plot_rule_base(figdir: Path) -> None:
     score = {"NG": -2, "NP": -1, "Z": 0, "PP": 1, "PG": 2}
-    matrix = np.array([[score[t] for t in row] for row in RULE_TABLE])
+    # Projected back out of the rule base itself, so the figure cannot drift
+    # from the rules that actually ran.
+    table = RULES.as_table("velocidade", "deslocamento", TERM_ORDER, TERM_ORDER)
+    matrix = np.array([[score[t] for t in row] for row in table])
 
     fig, ax = plt.subplots(figsize=(7.0, 5.5))
     im = ax.imshow(matrix, cmap="RdYlGn", vmin=-2, vmax=2, aspect="auto")
     for i in range(5):
         for j in range(5):
             ax.text(
-                j, i, RULE_TABLE[i][j],
+                j, i, table[i][j],
                 ha="center", va="center",
                 color="black", fontsize=12, fontweight="bold",
             )
