@@ -69,6 +69,47 @@ def test_term_spec_missing_key():
         Term.from_spec({"kind": "triangular"})
 
 
+@pytest.mark.parametrize(
+    ("kind", "params", "match"),
+    [
+        ("triangular", (1.0, 0.0, -1.0), "a <= b <= c"),
+        ("triangular", (0.5, -0.5, 1.0), "a <= b <= c"),
+        ("trapezoidal", (1.0, 0.5, -0.5, -1.0), "a <= b <= c <= d"),
+        ("left_shoulder", (0.0, 0.0), "b > a"),
+        ("left_shoulder", (1.0, 0.0), "b > a"),
+        ("right_shoulder", (0.0, 0.0), "b > a"),
+        ("gaussian", (0.0, 0.0), "sigma > 0"),
+        ("gaussian", (0.0, -0.5), "sigma > 0"),
+    ],
+)
+def test_term_rejects_parameters_that_violate_its_precondition(kind, params, match):
+    """Dragging a breakpoint past its neighbour must fail loudly.
+
+    A shoulder with `a == b` divides by zero and yields NaN at one input. That
+    NaN then propagates into inference *and* hides from the strong-partition
+    check, since every comparison against NaN is False — a corrupt controller
+    that validates clean and simulates plausibly.
+    """
+    with pytest.raises(TermError, match=match):
+        Term(kind, params)
+
+
+def test_term_allows_documented_degenerate_shapes():
+    """`triangular` explicitly permits a == b or b == c (one-sided shapes)."""
+    Term("triangular", (0.0, 0.0, 1.0))
+    Term("triangular", (0.0, 1.0, 1.0))
+
+
+def test_partition_error_reports_non_finite_as_infinite():
+    """Defence in depth: a NaN membership must not slip past as 'no deviation'."""
+    class Rogue:
+        def __call__(self, x):
+            return np.full_like(np.asarray(x, dtype=float), np.nan)
+
+    v = Variable("v", -1.0, 1.0, {"bad": Rogue()})
+    assert v.partition_error() == float("inf")
+
+
 # ----- Variable ---------------------------------------------------------------
 
 
@@ -265,3 +306,79 @@ def test_resolution_controls_the_output_grid():
     spec = demo_spec()
     spec.resolution = 101
     assert len(spec.build().output_universe) == 101
+
+
+def test_every_registered_mf_kind_round_trips_and_stays_finite():
+    """Each palette entry must survive spec -> JSON -> build -> evaluate.
+
+    `trapezoidal` and `gaussian` are reachable from the editor palette but are
+    used by no exercise, so nothing else exercises them.
+    """
+    import json
+
+    from fuzzy.membership import MF_REGISTRY
+
+    samples = {
+        "triangular": (-1.0, 0.0, 1.0),
+        "trapezoidal": (-1.0, -0.5, 0.5, 1.0),
+        "left_shoulder": (-1.0, 0.0),
+        "right_shoulder": (0.0, 1.0),
+        "gaussian": (0.0, 0.4),
+    }
+    assert set(samples) == set(MF_REGISTRY), "a palette entry is untested"
+
+    for kind, params in samples.items():
+        spec = FISSpec(
+            inputs={
+                "e": Variable(
+                    "e", -1.0, 1.0,
+                    {"LO": Term("left_shoulder", (-1.0, 0.0)),
+                     "MID": Term(kind, params),
+                     "HI": Term("right_shoulder", (0.0, 1.0))},
+                )
+            },
+            output=Variable.partition("u", -1.0, 1.0, ["N", "Z", "P"]),
+            rules=RuleBase([Rule({"e": "LO"}, "P"), Rule({"e": "MID"}, "Z"),
+                            Rule({"e": "HI"}, "N")]),
+        )
+        rebuilt = FISSpec.from_spec(json.loads(json.dumps(spec.to_spec())))
+        a, b = spec.build(), rebuilt.build()
+        for x in np.linspace(-1.0, 1.0, 21):
+            va = a.evaluate({"e": float(x)})
+            assert va == b.evaluate({"e": float(x)}), kind
+            assert np.isfinite(va), kind
+
+
+def test_randomised_controllers_round_trip_exactly():
+    """Seeded fuzz over term kinds and counts — the editor will produce variety."""
+    import json
+    import random
+
+    rng = random.Random(0)
+    arity = {"triangular": 3, "trapezoidal": 4, "left_shoulder": 2,
+             "right_shoulder": 2, "gaussian": 2}
+    for _ in range(50):
+        kind = rng.choice(list(arity))
+        if kind == "gaussian":
+            params = (rng.uniform(-1, 1), rng.uniform(0.05, 2.0))
+        else:
+            params = tuple(sorted(rng.uniform(-2, 2) for _ in range(arity[kind])))
+            if kind.endswith("shoulder") and params[0] == params[1]:
+                continue
+        names = [f"t{i}" for i in range(rng.choice([3, 4, 5, 7]))]
+        base = Variable.partition("e", -2.0, 2.0, names)
+        var = Variable("e", -2.0, 2.0, {**base.terms, "extra": Term(kind, params)})
+        spec = FISSpec(
+            inputs={"e": var},
+            output=Variable.partition("u", -1.0, 1.0, ["N", "Z", "P"]),
+            rules=RuleBase([
+                Rule({"e": t}, rng.choice(["N", "Z", "P"]))
+                for t in [*names, "extra"]
+            ]),
+        )
+        rebuilt = FISSpec.from_spec(json.loads(json.dumps(spec.to_spec())))
+        a, b = spec.build(), rebuilt.build()
+        for x in np.linspace(-2.0, 2.0, 9):
+            va = a.evaluate({"e": float(x)})
+            assert va == b.evaluate({"e": float(x)})
+            assert np.isfinite(va)

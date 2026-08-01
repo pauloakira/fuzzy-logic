@@ -85,8 +85,31 @@ ARITY = {
 }
 
 
+def _check_params(kind: str, p: tuple[float, ...]) -> str | None:
+    """Enforce each MF's stated precondition. Returns a message, or None if fine.
+
+    These are the constraints the module docstrings already declare. They matter
+    because violating them is silent rather than loud: a shoulder with `a == b`
+    divides by zero and yields NaN at one input, which then propagates into
+    inference and — because comparisons against NaN are False — slips past the
+    strong-partition check as well.
+    """
+    if kind in ("triangular", "trapezoidal"):
+        if list(p) != sorted(p):
+            names = "a <= b <= c" if kind == "triangular" else "a <= b <= c <= d"
+            return f"{kind} requires {names}, got {list(p)}"
+    elif kind in ("left_shoulder", "right_shoulder"):
+        if not p[1] > p[0]:
+            return f"{kind} requires b > a, got a={p[0]}, b={p[1]}"
+    elif kind == "gaussian":
+        if not p[1] > 0:
+            return f"gaussian requires sigma > 0, got sigma={p[1]}"
+    return None
+
+
 class TermError(ValueError):
-    """A term references an unknown MF kind, or the wrong number of parameters."""
+    """A term is malformed: unknown MF kind, wrong parameter count, or parameters
+    that violate the kind's stated precondition (ordering, or a positive sigma)."""
 
 
 @dataclass(frozen=True)
@@ -112,6 +135,9 @@ class Term:
             raise TermError(
                 f"{self.kind} takes {expected} parameters, got {len(self.params)}"
             )
+        problem = _check_params(self.kind, self.params)
+        if problem:
+            raise TermError(problem)
 
     def __call__(self, x: ArrayLike) -> NDArray[np.float64]:
         return MF_REGISTRY[self.kind](x, *self.params)
@@ -160,8 +186,12 @@ class Variable:
         hand-edited term set leaves a gap or an overlap.
         """
         grid = self.universe(n)
-        total = sum(t(grid) for t in self.terms.values())
-        return float(np.max(np.abs(np.asarray(total) - 1.0)))
+        total = np.asarray(sum(t(grid) for t in self.terms.values()), dtype=float)
+        if not np.all(np.isfinite(total)):
+            # NaN compares False against any threshold, so reporting it as a
+            # finite deviation is what keeps it from hiding from the caller.
+            return float("inf")
+        return float(np.max(np.abs(total - 1.0)))
 
     def to_spec(self) -> dict[str, Any]:
         return {

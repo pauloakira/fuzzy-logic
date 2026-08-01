@@ -324,6 +324,29 @@ the closure-built controller it replaces:
 
 `fuzzy/rules.py`, an empty docstring since the repo was scaffolded, is now a real module.
 
+### 10.5 Second verification round — MF preconditions
+
+Driving the editor's failure paths (rather than the happy path) found a real bug. `Term`
+validated kind and arity but not the *preconditions each MF docstring already states*:
+`a <= b <= c`, `b > a` for shoulders, `sigma > 0`. Violating them is silent, not loud:
+
+- `left_shoulder(a, a)` divides by zero and yields `NaN` at one input.
+- That `NaN` propagates into inference — and **hides from the strong-partition check**,
+  because every comparison against `NaN` is `False`. `partition_error()` returned `NaN`,
+  `NaN > 1e-9` was `False`, and `validate()` reported *no problems*.
+- The result was a controller that validated clean, simulated plausibly, and carried a
+  `NaN` landmine at one exact input.
+
+`Term.__post_init__` now enforces the preconditions, and `partition_error()` returns
+`inf` on any non-finite total so a `NaN` cannot hide from a threshold test again.
+Documented degenerate shapes (`a == b` on a triangular) stay legal.
+
+The same round confirmed: all five registered MF kinds survive spec -> JSON -> build ->
+evaluate (`trapezoidal` and `gaussian` are in the palette but used by no exercise, so
+nothing else exercises them); 300 randomised controllers round-trip exactly and finitely;
+and the diagram layer handles empty diagrams, unconnected inputs, doubly-connected inputs,
+self-loops, and invalid step sizes with specific errors.
+
 ## 11. What the graphical editor requires from the core
 
 The canvas is phase 7, but it constrains phases 2–4, so the requirements are recorded now.
