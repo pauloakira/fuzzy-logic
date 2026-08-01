@@ -156,19 +156,33 @@ class Diagram:
         return order
 
     def _check_discrete_chain(self) -> None:
-        """Phase-1 limit: a sampled block may not feed another sampled block."""
+        """A sampled block may not read another sampled block's *stale* output.
+
+        `sample()` updates every sampled block from one evaluation of the
+        continuous network, so it cannot order two sampled blocks against each
+        other — if one fed another algebraically, the second would silently read
+        the first's previous value.
+
+        Tracing stops at any block carrying continuous state. Whatever such a
+        block emits comes either from its integrated state (current) or from an
+        input held constant across the interval, so no staleness crosses it.
+        That is ordinary zero-order-hold structure, not a hazard: without this
+        stop, a plant with direct feedthrough (`D != 0`) inside a sampled loop
+        is rejected with a misleading multi-rate error.
+        """
         for d in (b for b in self._blocks if b.discrete):
             stack = [self._conns[(d, p)][0] for p in d.inputs]
             seen: set[Block] = set()
             while stack:
                 s = stack.pop()
-                if s in seen:
+                if s in seen or s.n_states:
                     continue
                 seen.add(s)
                 if s.discrete:
                     raise WiringError(
                         f"sampled block {d.name!r} depends on sampled block "
-                        f"{s.name!r}; multi-rate chains are out of scope"
+                        f"{s.name!r} through algebraic blocks only, so it would "
+                        f"read a stale value; multi-rate chains are out of scope"
                     )
                 if s.feedthrough:
                     stack.extend(self._conns[(s, p)][0] for p in s.inputs)

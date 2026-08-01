@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "name": "ex1_motor",
+  "blocks": [
+    {
+      "type": "MotorPlant",
+      "name": "plant",
+      "params": {
+        "k": 10.0,
+        "omega_rate_max": 1.0,
+        "omega_bounds": [
+          0.0,
+          1000.0
+        ],
+        "v_bounds": [
+          0.0,
+          100.0
+        ],
+        "omega0": 0.0,
+        "v0": 0.0
+      },
+      "layout": {
+        "x": 360.0,
+        "y": 120.0
+      }
+    },
+    {
+      "type": "Select",
+      "name": "vel",
+      "params": {
+        "index": 0
+      },
+      "layout": {
+        "x": 40.0,
+        "y": 40.0
+      }
+    },
+    {
+      "type": "Select",
+      "name": "alim",
+      "params": {
+        "index": 1
+      },
+      "layout": {
+        "x": 40.0,
+        "y": 200.0
+      }
+    },
+    {
+      "type": "FISBlock",
+      "name": "controller",
+      "params": {
+        "fis": {
+          "inputs": {
+            "velocidade": {
+              "name": "velocidade",
+              "low": 0.0,
+              "high": 1000.0,
+              "terms": {
+                "Baixa": {
+                  "kind": "left_shoulder",
+                  "params": [
+                    0.0,
+                    500.0
+                  ]
+                },
+                "Media": {
+                  "kind": "triangular",
+                  "params": [
+                    0.0,
+                    500.0,
+                    1000.0
+                  ]
+                },
+                "Alta": {
+                  "kind": "right_shoulder",
+                  "params": [
+                    500.0,
+                    1000.0
+                  ]
+                }
+              }
+            },
+            "alimentacao": {
+              "name": "alimentacao",
+              "low": 0.0,
+              "high": 100.0,
+              "terms": {
+                "Baixa": {
+                  "kind": "left_shoulder",
+                  "params": [
+                    0.0,
+                    50.0
+                  ]
+                },
+                "Media": {
+                  "kind": "triangular",
+                  "params": [
+                    0.0,
+                    50.0,
+                    100.0
+                  ]
+                },
+                "Alta": {
+                  "kind": "right_shoulder",
+                  "params": [
+                    50.0,
+                    100.0
+                  ]
+                }
+              }
+            }
+          },
+          "output": {
+            "name": "aceleracao",
+            "low": -1.0,
+            "high": 1.0,
+            "terms": {
+              "Freio": {
+                "kind": "left_shoulder",
+                "params": [
+                  -1.0,
+                  0.0
+                ]
+              },
+              "Neutro": {
+                "kind": "triangular",
+                "params": [
+                  -1.0,
+                  0.0,
+                  1.0
+                ]
+              },
+              "Acelerar": {
+                "kind": "right_shoulder",
+                "params": [
+                  0.0,
+                  1.0
+                ]
+              }
+            }
+          },
+          "rules": [
+            {
+              "if": {
+                "alimentacao": "Baixa",
+                "velocidade": "Baixa"
+              },
+              "then": "Acelerar"
+            },
+            {
+              "if": {
+                "alimentacao": "Media",
+                "velocidade": "Baixa"
+              },
+              "then": "Acelerar"
+            },
+            {
+              "if": {
+                "alimentacao": "Alta",
+                "velocidade": "Baixa"
+              },
+              "then": "Neutro"
+            },
+            {
+              "if": {
+                "alimentacao": "Baixa",
+                "velocidade": "Media"
+              },
+              "then": "Acelerar"
+            },
+            {
+              "if": {
+                "alimentacao": "Media",
+                "velocidade": "Media"
+              },
+              "then": "Neutro"
+            },
+            {
+              "if": {
+                "alimentacao": "Alta",
+                "velocidade": "Media"
+              },
+              "then": "Freio"
+            },
+            {
+              "if": {
+                "alimentacao": "Baixa",
+                "velocidade": "Alta"
+              },
+              "then": "Neutro"
+            },
+            {
+              "if": {
+                "alimentacao": "Media",
+                "velocidade": "Alta"
+              },
+              "then": "Freio"
+            },
+            {
+              "if": {
+                "alimentacao": "Alta",
+                "velocidade": "Alta"
+              },
+              "then": "Freio"
+            }
+          ],
+          "resolution": 401
+        },
+        "gain": {},
+        "clip": {
+          "velocidade": [
+            0.0,
+            1000.0
+          ],
+          "alimentacao": [
+            0.0,
+            100.0
+          ]
+        },
+        "output_gain": 1.0
+      },
+      "layout": {
+        "x": 200.0,
+        "y": 120.0
+      }
+    },
+    {
+      "type": "Saturation",
+      "name": "actuator",
+      "params": {
+        "lo": -1.0,
+        "hi": 1.0
+      },
+      "layout": {
+        "x": 560.0,
+        "y": 120.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": [
+        "plant",
+        "y"
+      ],
+      "to": [
+        "vel",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "plant",
+        "y"
+      ],
+      "to": [
+        "alim",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "vel",
+        "y"
+      ],
+      "to": [
+        "controller",
+        "velocidade"
+      ]
+    },
+    {
+      "from": [
+        "alim",
+        "y"
+      ],
+      "to": [
+        "controller",
+        "alimentacao"
+      ]
+    },
+    {
+      "from": [
+        "controller",
+        "u"
+      ],
+      "to": [
+        "actuator",
+        "u"
+      ]
+    },
+    {
+      "from": [
+        "actuator",
+        "y"
+      ],
+      "to": [
+        "plant",
+        "u"
+      ]
+    }
+  ]
+}

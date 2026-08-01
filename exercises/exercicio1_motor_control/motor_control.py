@@ -9,12 +9,43 @@ Plant
 - Speed slews toward omega_ss at rate-limited |d omega/dt| <= 1 rpm/s.
 - Voltage updates at rate equal to FIS output (capped at ±1 V/s).
 
+The plant is **not** LTI: both `omega` and `V` are hard-clamped to their physical
+ranges, and `omega`'s natural response is itself rate-limited. `StateSpacePlant`
+cannot express either the rate limiter or the state clamps, so this module
+defines `MotorPlant`, a small `Block` subclass local to this file (it is not a
+reusable plant, so it does not belong in `fuzzy/blocks.py`). It has no
+`eigenvalues()` and therefore no RK4 stability guard — see the class docstring.
+
 Controller
 ----------
-- Mamdani FIS with two inputs (velocidade, alimentacao) and one output (aceleracao).
+- Mamdani FIS with two inputs (velocidade, alimentacao) and one output
+  (aceleracao, a voltage rate in V/s — see "Units" below).
 - Membership functions: shouldered triangulars over [0, 1000], [0, 100], [-1, 1].
-- 3 x 3 rule base (see RULES below).
+- 3 x 3 rule base (see RULE_TABLE below).
 - Inference: min t-norm for AND, max aggregation, centroid defuzzification.
+
+Units
+-----
+The FIS output is applied as `dV/dt`, in **V/s** — it is the rate at which the
+supply voltage is incremented or decremented, per the assignment ("increment or
+decrement the supply voltage"). It is *not* a speed rate: `omega_ss = 10 * V`,
+so 1 V/s of commanded voltage change corresponds to 10 rpm/s of commanded speed
+change, which the plant's own rate limiter then clips to ±1 rpm/s. The two rates
+differ by exactly the plant gain of 10 — see the printed summary in `main()` and
+REPORT.md §2.
+
+Simulation
+----------
+The plant and controller are assembled as a block diagram (`fuzzy.sim`) rather
+than a hand-rolled integration loop, so the diagram can be saved as a spec file
+for the graphical editor. See `docs/design-block-diagram-simulation.md`.
+
+The block-diagram core integrates with RK4 rather than the original script's
+explicit Euler at dt=1.0 s. The plant's unclipped time constant is 1 s, so Euler
+at dt=1.0 was exactly dead-beat; RK4 resolves the same interval with intermediate
+derivative evaluations and gives slightly different trajectories. That is an
+accuracy improvement, not a regression — `main()` prints the same summary
+statistics the earlier Euler version reported, and they differ only slightly.
 
 Outputs
 -------
@@ -23,163 +54,226 @@ Outputs
 - figures/mf_aceleracao.png
 - figures/control_surface.png
 - figures/simulation.png
+- diagram.json                     — block-diagram spec (editor fixture)
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.typing import NDArray
 
-# Allow `python exercises/exercicio1_motor_control/motor_control.py` from anywhere.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from fuzzy.blocks import Block, FISBlock, Inputs, Saturation, Select
+from fuzzy.fis import FISSpec, MamdaniFIS
+from fuzzy.membership import Variable
+from fuzzy.rules import RuleBase
+from fuzzy.sim import Diagram, Log, simulate
+from fuzzy.spec import register, save
 
-from fuzzy.fis import MamdaniFIS  # noqa: E402
-from fuzzy.membership import left_shoulder, right_shoulder, triangular  # noqa: E402
+# ----- Plant parameters -----------------------------------------------------
 
-# ----- Membership functions -------------------------------------------------
+K = 10.0  # rpm per volt — omega_ss(V) = K * V
+OMEGA_MAX = 1000.0  # rpm
+V_MAX = 100.0  # V
+OMEGA_RATE_MAX = 1.0  # rpm/s — the motor's natural-response rate limit
+V_RATE_MAX = 1.0  # V/s — the actuator's rate limit (== the FIS output range)
 
+# ----- Simulation settings --------------------------------------------------
 
-def velocidade_baixa(x):
-    return left_shoulder(x, 0, 500)
-
-
-def velocidade_media(x):
-    return triangular(x, 0, 500, 1000)
-
-
-def velocidade_alta(x):
-    return right_shoulder(x, 500, 1000)
-
-
-def alimentacao_baixa(x):
-    return left_shoulder(x, 0, 50)
+DT = 1.0  # s — control period and integration step, matching the original
+T_MAX = 800.0  # s — long enough to see convergence toward (500, 50)
 
 
-def alimentacao_media(x):
-    return triangular(x, 0, 50, 100)
+# ----- The plant, as a block -------------------------------------------------
 
 
-def alimentacao_alta(x):
-    return right_shoulder(x, 50, 100)
+class MotorPlant(Block):
+    """DC motor plant, state `[omega, V]`.
+
+        omega_dot = clip(K * V - omega, -OMEGA_RATE_MAX, +OMEGA_RATE_MAX)
+        V_dot     = u                              (the controller's V/s command)
+
+    with `omega` clamped to `[0, OMEGA_MAX]` and `V` clamped to `[0, V_MAX]`.
+
+    Both the rate limiter on `omega_dot` and the hard state clamps make this
+    plant non-linear, so it is **not** an LTI system: it exposes no
+    `eigenvalues()`, and therefore `Diagram.stability_limit()` has nothing to
+    check it against — there is no automatic RK4 stability guard for this
+    block, unlike `StateSpacePlant`. The state clamps are enforced as reflecting
+    boundaries on the derivative (zeroed once a state is at its bound and the
+    unclipped derivative would push it further out) rather than by clipping the
+    integrated state after the fact, since RK4 has no discrete "after a step"
+    point at which to clip.
+
+    `feedthrough` is `False`: `output()` reads only the state `x`, never `u` —
+    unlike `StateSpacePlant` with a non-zero `D`, this plant's output has no
+    algebraic dependence on its input.
+    """
+
+    inputs = ("u",)
+    outputs = ("y",)
+    n_states = 2
+    feedthrough = False
+
+    def __init__(
+        self,
+        k: float = K,
+        omega_rate_max: float = OMEGA_RATE_MAX,
+        omega_bounds: tuple[float, float] = (0.0, OMEGA_MAX),
+        v_bounds: tuple[float, float] = (0.0, V_MAX),
+        omega0: float = 0.0,
+        v0: float = 0.0,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(name)
+        self.k = float(k)
+        self.omega_rate_max = float(omega_rate_max)
+        self.omega_bounds = (float(omega_bounds[0]), float(omega_bounds[1]))
+        self.v_bounds = (float(v_bounds[0]), float(v_bounds[1]))
+        self.omega0 = float(omega0)
+        self.v0 = float(v0)
+
+    def initial_state(self) -> NDArray[np.float64]:
+        return np.array([self.omega0, self.v0])
+
+    def derivative(
+        self, t: float, x: NDArray[np.float64], u: Inputs
+    ) -> NDArray[np.float64]:
+        omega, V = x
+        lo_om, hi_om = self.omega_bounds
+        lo_v, hi_v = self.v_bounds
+        omega_dot = float(
+            np.clip(self.k * V - omega, -self.omega_rate_max, self.omega_rate_max)
+        )
+        v_dot = float(u["u"])
+        if (omega <= lo_om and omega_dot < 0.0) or (omega >= hi_om and omega_dot > 0.0):
+            omega_dot = 0.0
+        if (V <= lo_v and v_dot < 0.0) or (V >= hi_v and v_dot > 0.0):
+            v_dot = 0.0
+        return np.array([omega_dot, v_dot])
+
+    def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, object]:
+        omega = float(np.clip(x[0], *self.omega_bounds))
+        V = float(np.clip(x[1], *self.v_bounds))
+        return {"y": np.array([omega, V])}
 
 
-def aceleracao_freio(x):
-    return left_shoulder(x, -1, 0)
+register(MotorPlant)
 
 
-def aceleracao_neutro(x):
-    return triangular(x, -1, 0, 1)
+# ----- Linguistic variables ---------------------------------------------------
+
+# `Variable.partition` builds the standard strong partition used by the original
+# hand-written membership functions: a descending shoulder, a triangle centred on
+# the midpoint, and a rising shoulder, each meeting its neighbour at half-membership.
+INPUT_TERMS = ["Baixa", "Media", "Alta"]
+OUTPUT_TERMS_ORDER = ["Freio", "Neutro", "Acelerar"]
+
+VEL = Variable.partition("velocidade", 0.0, OMEGA_MAX, INPUT_TERMS)
+ALIM = Variable.partition("alimentacao", 0.0, V_MAX, INPUT_TERMS)
+ACEL = Variable.partition("aceleracao", -V_RATE_MAX, V_RATE_MAX, OUTPUT_TERMS_ORDER)
 
 
-def aceleracao_acelerar(x):
-    return right_shoulder(x, 0, 1)
+# ----- Rule base ---------------------------------------------------------------
 
-
-# ----- FIS construction -----------------------------------------------------
-
-INPUTS = {
-    "velocidade": {
-        "Baixa": velocidade_baixa,
-        "Media": velocidade_media,
-        "Alta": velocidade_alta,
-    },
-    "alimentacao": {
-        "Baixa": alimentacao_baixa,
-        "Media": alimentacao_media,
-        "Alta": alimentacao_alta,
-    },
-}
-
-OUTPUT_TERMS = {
-    "Freio": aceleracao_freio,
-    "Neutro": aceleracao_neutro,
-    "Acelerar": aceleracao_acelerar,
-}
-
-OUTPUT_UNIVERSE = np.linspace(-1.0, 1.0, 401)
-
-# Rule base (rows = velocidade, columns = alimentacao):
+# Rows: velocidade. Columns: alimentacao.
 #                | Alim Baixa | Alim Media | Alim Alta
 # Vel Baixa      | Acelerar   | Acelerar   | Neutro
 # Vel Media      | Acelerar   | Neutro     | Freio
 # Vel Alta       | Neutro     | Freio      | Freio
-RULES = [
-    ({"velocidade": "Baixa", "alimentacao": "Baixa"}, "Acelerar"),
-    ({"velocidade": "Baixa", "alimentacao": "Media"}, "Acelerar"),
-    ({"velocidade": "Baixa", "alimentacao": "Alta"}, "Neutro"),
-    ({"velocidade": "Media", "alimentacao": "Baixa"}, "Acelerar"),
-    ({"velocidade": "Media", "alimentacao": "Media"}, "Neutro"),
-    ({"velocidade": "Media", "alimentacao": "Alta"}, "Freio"),
-    ({"velocidade": "Alta", "alimentacao": "Baixa"}, "Neutro"),
-    ({"velocidade": "Alta", "alimentacao": "Media"}, "Freio"),
-    ({"velocidade": "Alta", "alimentacao": "Alta"}, "Freio"),
+RULE_TABLE = [
+    ["Acelerar", "Acelerar", "Neutro"],
+    ["Acelerar", "Neutro", "Freio"],
+    ["Neutro", "Freio", "Freio"],
 ]
+
+RULES = RuleBase.from_table(
+    row_var="velocidade",
+    col_var="alimentacao",
+    row_terms=INPUT_TERMS,
+    col_terms=INPUT_TERMS,
+    table=RULE_TABLE,
+)
+
+OUTPUT_RESOLUTION = 401
+
+
+def build_fis_spec() -> FISSpec:
+    """The controller as data — serialisable, validatable, editable."""
+    return FISSpec(
+        inputs={"velocidade": VEL, "alimentacao": ALIM},
+        output=ACEL,
+        rules=RULES,
+        resolution=OUTPUT_RESOLUTION,
+    )
 
 
 def build_fis() -> MamdaniFIS:
-    return MamdaniFIS(
-        inputs=INPUTS,
-        output_terms=OUTPUT_TERMS,
-        output_universe=OUTPUT_UNIVERSE,
-        rules=RULES,
+    """The runnable inference system built from the spec."""
+    return build_fis_spec().build()
+
+
+# ----- Block diagram ------------------------------------------------------------
+
+FUZZY_PORTS = ("velocidade", "alimentacao")
+"""Speed and voltage input ports of the fuzzy controller."""
+
+_LAYOUT = {
+    "plant": {"x": 360.0, "y": 120.0},
+    "vel": {"x": 40.0, "y": 40.0},
+    "alim": {"x": 40.0, "y": 200.0},
+    "controller": {"x": 200.0, "y": 120.0},
+    "actuator": {"x": 560.0, "y": 120.0},
+}
+
+
+def build_diagram(
+    x0: float = 0.0,
+    v0: float = 0.0,
+    name: str = "motor",
+) -> Diagram:
+    """Assemble the closed loop: plant, phase-plane selects, controller, actuator."""
+    d = Diagram(name=name)
+    plant = MotorPlant(
+        k=K, omega_rate_max=OMEGA_RATE_MAX, omega0=x0, v0=v0, name="plant"
     )
+    vel = Select(0, name="vel")
+    alim = Select(1, name="alim")
+    d.connect(plant, vel)
+    d.connect(plant, alim)
 
-
-# ----- Plant simulation -----------------------------------------------------
-
-
-def simulate(
-    fis: MamdaniFIS,
-    omega0: float = 0.0,
-    V0: float = 0.0,
-    t_max: float = 300.0,
-    dt: float = 1.0,
-    k: float = 10.0,
-    omega_max_rate: float = 1.0,
-) -> dict[str, np.ndarray]:
-    """Closed-loop simulation.
-
-    At each step, the FIS produces an acceleration command in [-1, +1].
-    The voltage updates at rate `acc` V/s; the motor speed slews toward `k * V`
-    at a rate capped by `omega_max_rate` rpm/s.
-    """
-    n_steps = int(t_max / dt) + 1
-    t = np.zeros(n_steps)
-    omega = np.zeros(n_steps)
-    V = np.zeros(n_steps)
-    acc = np.zeros(n_steps)
-
-    omega[0] = omega0
-    V[0] = V0
-
-    for i in range(n_steps - 1):
-        a = fis.evaluate(
-            {"velocidade": float(omega[i]), "alimentacao": float(V[i])}
-        )
-        acc[i] = a
-        omega_eq = k * V[i]
-        natural = float(np.clip(omega_eq - omega[i], -omega_max_rate, omega_max_rate))
-        omega[i + 1] = float(np.clip(omega[i] + natural * dt, 0.0, 1000.0))
-        V[i + 1] = float(np.clip(V[i] + a * dt, 0.0, 100.0))
-        t[i + 1] = t[i] + dt
-
-    acc[-1] = fis.evaluate(
-        {"velocidade": float(omega[-1]), "alimentacao": float(V[-1])}
+    controller = FISBlock(
+        build_fis_spec(),
+        clip={FUZZY_PORTS[0]: (0.0, OMEGA_MAX), FUZZY_PORTS[1]: (0.0, V_MAX)},
+        name="controller",
     )
+    d.connect(vel, (controller, FUZZY_PORTS[0]))
+    d.connect(alim, (controller, FUZZY_PORTS[1]))
 
-    return {"t": t, "omega": omega, "V": V, "acc": acc}
+    # The actuator's rate limit is stated once, explicitly, rather than relying
+    # on the FIS output universe alone to enforce it.
+    actuator = Saturation(-V_RATE_MAX, V_RATE_MAX, name="actuator")
+    d.connect(controller, actuator)
+    d.connect(actuator, plant)
+
+    present = {b.name for b in d.blocks}
+    d.layout.update({k: v for k, v in _LAYOUT.items() if k in present})
+    return d
+
+
+def run(x0: float = 0.0, v0: float = 0.0, t_max: float = T_MAX) -> Log:
+    """Build and simulate in one step."""
+    d = build_diagram(x0=x0, v0=v0)
+    return simulate(d, t_max=t_max, dt_control=DT)
 
 
 # ----- Plotting -------------------------------------------------------------
 
-COLOR_LOW = "C3"     # red
-COLOR_MID = "C0"     # blue
-COLOR_HIGH = "C2"    # green
+COLOR_LOW = "C3"  # red
+COLOR_MID = "C0"  # blue
+COLOR_HIGH = "C2"  # green
 
 
 def _styled_axes(ax, ylim=(-0.05, 1.1)):
@@ -188,11 +282,11 @@ def _styled_axes(ax, ylim=(-0.05, 1.1)):
 
 
 def plot_mf_velocidade(figdir: Path) -> None:
-    x = np.linspace(0, 1000, 1001)
+    x = np.linspace(0, OMEGA_MAX, 1001)
     fig, ax = plt.subplots(figsize=(6.5, 3.4))
-    ax.plot(x, velocidade_baixa(x), label="Baixa", color=COLOR_LOW, lw=2)
-    ax.plot(x, velocidade_media(x), label="Média", color=COLOR_MID, lw=2)
-    ax.plot(x, velocidade_alta(x), label="Alta", color=COLOR_HIGH, lw=2)
+    ax.plot(x, VEL["Baixa"](x), label="Baixa", color=COLOR_LOW, lw=2)
+    ax.plot(x, VEL["Media"](x), label="Média", color=COLOR_MID, lw=2)
+    ax.plot(x, VEL["Alta"](x), label="Alta", color=COLOR_HIGH, lw=2)
     ax.set_xlabel("rpm")
     ax.set_ylabel(r"$\mu(\omega)$")
     ax.set_title("Entrada: Velocidade")
@@ -204,11 +298,11 @@ def plot_mf_velocidade(figdir: Path) -> None:
 
 
 def plot_mf_alimentacao(figdir: Path) -> None:
-    x = np.linspace(0, 100, 1001)
+    x = np.linspace(0, V_MAX, 1001)
     fig, ax = plt.subplots(figsize=(6.5, 3.4))
-    ax.plot(x, alimentacao_baixa(x), label="Baixa", color=COLOR_LOW, lw=2)
-    ax.plot(x, alimentacao_media(x), label="Média", color=COLOR_MID, lw=2)
-    ax.plot(x, alimentacao_alta(x), label="Alta", color=COLOR_HIGH, lw=2)
+    ax.plot(x, ALIM["Baixa"](x), label="Baixa", color=COLOR_LOW, lw=2)
+    ax.plot(x, ALIM["Media"](x), label="Média", color=COLOR_MID, lw=2)
+    ax.plot(x, ALIM["Alta"](x), label="Alta", color=COLOR_HIGH, lw=2)
     ax.set_xlabel("V")
     ax.set_ylabel(r"$\mu(V)$")
     ax.set_title("Entrada: Alimentação")
@@ -220,13 +314,13 @@ def plot_mf_alimentacao(figdir: Path) -> None:
 
 
 def plot_mf_aceleracao(figdir: Path) -> None:
-    x = np.linspace(-1, 1, 1001)
+    x = np.linspace(-V_RATE_MAX, V_RATE_MAX, 1001)
     fig, ax = plt.subplots(figsize=(6.5, 3.4))
-    ax.plot(x, aceleracao_freio(x), label="Freio", color=COLOR_LOW, lw=2)
-    ax.plot(x, aceleracao_neutro(x), label="Neutro", color=COLOR_MID, lw=2)
-    ax.plot(x, aceleracao_acelerar(x), label="Aceleração", color=COLOR_HIGH, lw=2)
-    ax.set_xlabel("rpm/s")
-    ax.set_ylabel(r"$\mu(\dot\omega)$")
+    ax.plot(x, ACEL["Freio"](x), label="Freio", color=COLOR_LOW, lw=2)
+    ax.plot(x, ACEL["Neutro"](x), label="Neutro", color=COLOR_MID, lw=2)
+    ax.plot(x, ACEL["Acelerar"](x), label="Aceleração", color=COLOR_HIGH, lw=2)
+    ax.set_xlabel("V/s")
+    ax.set_ylabel(r"$\mu(\dot V)$")
     ax.set_title("Saída: Aceleração")
     ax.legend(loc="upper center", ncol=3, frameon=False)
     _styled_axes(ax)
@@ -236,57 +330,58 @@ def plot_mf_aceleracao(figdir: Path) -> None:
 
 
 def plot_control_surface(fis: MamdaniFIS, figdir: Path) -> None:
-    omegas = np.linspace(0, 1000, 41)
-    Vs = np.linspace(0, 100, 41)
+    omegas = np.linspace(0, OMEGA_MAX, 41)
+    Vs = np.linspace(0, V_MAX, 41)
     Z = np.zeros((len(omegas), len(Vs)))
     for i, om in enumerate(omegas):
         for j, v in enumerate(Vs):
-            Z[i, j] = fis.evaluate(
-                {"velocidade": float(om), "alimentacao": float(v)}
-            )
+            Z[i, j] = fis.evaluate({"velocidade": float(om), "alimentacao": float(v)})
 
     fig = plt.figure(figsize=(7.5, 5.4))
     ax = fig.add_subplot(111, projection="3d")
     OM, VV = np.meshgrid(Vs, omegas)
-    surf = ax.plot_surface(
-        OM, VV, Z, cmap="RdYlGn", edgecolor="none", alpha=0.95
-    )
+    surf = ax.plot_surface(OM, VV, Z, cmap="RdYlGn", edgecolor="none", alpha=0.95)
     ax.set_xlabel("Alimentação (V)")
     ax.set_ylabel("Velocidade (rpm)")
-    ax.set_zlabel("Aceleração (rpm/s)")
+    ax.set_zlabel("Aceleração (V/s)")
     ax.set_title("Superfície de controle")
-    fig.colorbar(surf, shrink=0.6, aspect=12, label="rpm/s")
+    fig.colorbar(surf, shrink=0.6, aspect=12, label="V/s")
     fig.tight_layout()
     fig.savefig(figdir / "control_surface.png", dpi=140)
     plt.close(fig)
 
 
-def plot_simulation(fis: MamdaniFIS, figdir: Path) -> None:
-    h_low = simulate(fis, omega0=0, V0=0, t_max=800, dt=1.0)
-    h_high = simulate(fis, omega0=1000, V0=100, t_max=800, dt=1.0)
+def plot_simulation(figdir: Path) -> None:
+    h_low = run(x0=0.0, v0=0.0)
+    h_high = run(x0=OMEGA_MAX, v0=V_MAX)
 
     fig, axes = plt.subplots(3, 1, figsize=(7.5, 6.4), sharex=True)
 
-    axes[0].plot(h_low["t"], h_low["omega"], color="C0", lw=1.8,
-                 label=r"Início (0, 0)")
-    axes[0].plot(h_high["t"], h_high["omega"], color="C3", lw=1.8,
-                 label=r"Início (1000, 100)")
-    axes[0].axhline(500, color="gray", linestyle=":", alpha=0.6,
-                    label="Equilíbrio")
+    axes[0].plot(
+        h_low.t, h_low.col("plant.y", 0), color="C0", lw=1.8, label=r"Início (0, 0)"
+    )
+    axes[0].plot(
+        h_high.t,
+        h_high.col("plant.y", 0),
+        color="C3",
+        lw=1.8,
+        label=r"Início (1000, 100)",
+    )
+    axes[0].axhline(500, color="gray", linestyle=":", alpha=0.6, label="Equilíbrio")
     axes[0].set_ylabel("Velocidade (rpm)")
     axes[0].legend(loc="center right")
     axes[0].grid(alpha=0.3)
 
-    axes[1].plot(h_low["t"], h_low["V"], color="C0", lw=1.8)
-    axes[1].plot(h_high["t"], h_high["V"], color="C3", lw=1.8)
+    axes[1].plot(h_low.t, h_low.col("plant.y", 1), color="C0", lw=1.8)
+    axes[1].plot(h_high.t, h_high.col("plant.y", 1), color="C3", lw=1.8)
     axes[1].axhline(50, color="gray", linestyle=":", alpha=0.6)
     axes[1].set_ylabel("Alimentação (V)")
     axes[1].grid(alpha=0.3)
 
-    axes[2].plot(h_low["t"], h_low["acc"], color="C0", lw=1.8)
-    axes[2].plot(h_high["t"], h_high["acc"], color="C3", lw=1.8)
+    axes[2].plot(h_low.t, h_low["actuator.y"], color="C0", lw=1.8)
+    axes[2].plot(h_high.t, h_high["actuator.y"], color="C3", lw=1.8)
     axes[2].axhline(0, color="gray", linestyle=":", alpha=0.6)
-    axes[2].set_ylabel("Aceleração (rpm/s)")
+    axes[2].set_ylabel("Aceleração (V/s)")
     axes[2].set_xlabel("Tempo (s)")
     axes[2].grid(alpha=0.3)
 
@@ -300,7 +395,6 @@ def plot_simulation(fis: MamdaniFIS, figdir: Path) -> None:
 
 
 def main() -> None:
-    np.random.seed(0)
     fis = build_fis()
 
     here = Path(__file__).parent
@@ -311,15 +405,40 @@ def main() -> None:
     plot_mf_alimentacao(figdir)
     plot_mf_aceleracao(figdir)
     plot_control_surface(fis, figdir)
-    plot_simulation(fis, figdir)
+    plot_simulation(figdir)
+
+    spec_path = save(build_diagram(name="ex1_motor"), here / "diagram.json")
 
     samples = [(0, 0), (200, 20), (500, 50), (700, 70), (900, 90), (1000, 100)]
-    print("(velocidade, alimentação) → aceleração")
+    print("(velocidade, alimentação) → aceleração (V/s)")
     for om, v in samples:
         a = fis.evaluate({"velocidade": float(om), "alimentacao": float(v)})
-        print(f"  ({om:>4d} rpm, {v:>3d} V) → {a:+.4f} rpm/s")
+        print(f"  ({om:>4d} rpm, {v:>3d} V) → {a:+.4f} V/s")
+
+    h_low = run(x0=0.0, v0=0.0)
+    omega_low = h_low.col("plant.y", 0)
+    V_low = h_low.col("plant.y", 1)
+    diff = np.abs(V_low - omega_low / K)
+    imax = int(np.argmax(diff))
+    h_high = run(x0=OMEGA_MAX, v0=V_MAX)
+
+    print()
+    print(
+        f"max|V - omega/{K:g}| = {diff[imax]:.4f} V at t={h_low.t[imax]:.0f} s "
+        f"(commanded equilibrium speed running ahead of actual speed)"
+    )
+    print(
+        f"state at t={T_MAX:g} s from (0, 0):        "
+        f"omega={omega_low[-1]:.2f} rpm, V={V_low[-1]:.2f} V"
+    )
+    print(
+        f"state at t={T_MAX:g} s from (1000, 100):   "
+        f"omega={h_high.col('plant.y', 0)[-1]:.2f} rpm, "
+        f"V={h_high.col('plant.y', 1)[-1]:.2f} V"
+    )
 
     print(f"\nFigures saved to: {figdir}")
+    print(f"Diagram spec saved to: {spec_path}")
 
 
 if __name__ == "__main__":
