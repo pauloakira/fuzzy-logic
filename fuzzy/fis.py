@@ -74,6 +74,22 @@ class MamdaniFIS:
         return crisp, aggregated, memberships, strengths
 
 
+class FISValidationError(ValueError):
+    """A controller failed validation. `.problems` holds every problem found.
+
+    Carried as data so an editor can highlight all offending rules at once
+    rather than parsing them back out of the message.
+    """
+
+    def __init__(self, problems: Sequence[str]) -> None:
+        self.problems = list(problems)
+        n = len(self.problems)
+        super().__init__(
+            f"invalid rule base: {n} problem{'s' if n != 1 else ''}\n  "
+            + "\n  ".join(self.problems)
+        )
+
+
 @dataclass
 class FISSpec:
     """A complete Mamdani controller described as data.
@@ -123,9 +139,7 @@ class FISSpec:
                 self.term_names(), list(self.output.terms)
             )
             if problems:
-                raise ValueError(
-                    "invalid rule base:\n  " + "\n  ".join(problems)
-                )
+                raise FISValidationError(problems)
         return MamdaniFIS(
             inputs={n: dict(v.terms) for n, v in self.inputs.items()},
             output_terms=dict(self.output.terms),

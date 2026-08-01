@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fuzzy.fis import FISSpec
+from fuzzy.fis import FISSpec, FISValidationError
 from fuzzy.membership import (
     Term,
     TermError,
@@ -208,8 +208,27 @@ def test_spec_builds_a_working_fis():
 def test_build_strict_raises_on_a_bad_rule():
     spec = demo_spec()
     spec.rules.rules.append(Rule({"deslocamento": "NOPE"}, "PG"))
-    with pytest.raises(ValueError, match="no term 'NOPE'"):
+    with pytest.raises(FISValidationError, match="no term 'NOPE'"):
         spec.build()
+
+
+def test_validation_error_carries_every_problem_as_data():
+    """An editor consumes `.problems`; it should not have to parse the message."""
+    spec = demo_spec()
+    spec.rules.rules.append(Rule({"deslocamento": "NOPE"}, "ALSO_NOPE"))
+    with pytest.raises(FISValidationError) as exc:
+        spec.build()
+    assert len(exc.value.problems) == 2
+    assert any("no term 'NOPE'" in p for p in exc.value.problems)
+    assert any("ALSO_NOPE" in p for p in exc.value.problems)
+    # the summary line must stand alone: a canvas may show only the first line
+    assert str(exc.value).splitlines()[0] == "invalid rule base: 2 problems"
+
+
+def test_build_non_strict_skips_validation():
+    spec = demo_spec()
+    spec.rules.rules.append(Rule({"deslocamento": "NOPE"}, "PG"))
+    spec.build(strict=False)  # must not raise
 
 
 def test_validate_flags_incomplete_coverage():

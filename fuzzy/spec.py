@@ -62,7 +62,15 @@ Factory = Callable[..., Block]
 
 
 class SpecError(ValueError):
-    """The spec is malformed, or references an unknown block type or object."""
+    """The spec is malformed, or references an unknown block type or object.
+
+    `.block` names the offending block when one is identifiable, so an editor
+    can highlight that node rather than reporting a whole-file failure.
+    """
+
+    def __init__(self, message: str, block: str | None = None) -> None:
+        super().__init__(message)
+        self.block = block
 
 
 # ----- registry --------------------------------------------------------------
@@ -242,7 +250,8 @@ def from_spec(
             raise SpecError(f"block entry missing {exc.args[0]!r}") from None
         if type_name not in REGISTRY:
             raise SpecError(
-                f"unknown block type {type_name!r}; registered: {sorted(REGISTRY)}"
+                f"unknown block type {type_name!r}; registered: {sorted(REGISTRY)}",
+                block=block_name,
             )
         kwargs = {}
         for key, raw in (entry.get("params") or {}).items():
@@ -256,7 +265,14 @@ def from_spec(
                     )
                 value = supplied[ref]
             kwargs[key] = value
-        d.add(REGISTRY[type_name](name=block_name, **kwargs))
+        try:
+            d.add(REGISTRY[type_name](name=block_name, **kwargs))
+        except SpecError:
+            raise
+        except Exception as exc:
+            raise SpecError(
+                f"block {block_name!r} ({type_name}): {exc}", block=block_name
+            ) from exc
         if entry.get("layout"):
             d.layout[block_name] = dict(entry["layout"])
 

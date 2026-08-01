@@ -239,6 +239,37 @@ def test_provided_object_completes_the_round_trip():
 # ----- error handling ---------------------------------------------------------
 
 
+def test_block_construction_failure_names_the_offending_block():
+    """The canvas needs to know which node to highlight, not just that a load failed."""
+    from fuzzy.fis import FISSpec
+    from fuzzy.membership import Variable
+    from fuzzy.rules import RuleBase
+
+    terms = ["NG", "Z", "PG"]
+    fspec = FISSpec(
+        inputs={"e": Variable.partition("e", -1.0, 1.0, terms)},
+        output=Variable.partition("u", -1.0, 1.0, terms),
+        rules=RuleBase.from_table("e", "e", terms, terms, [[t] * 3 for t in terms]),
+    )
+    data = fspec.to_spec()
+    data["inputs"]["e"]["terms"]["NG"]["kind"] = "sigmoid"
+    spec = {
+        "version": 1,
+        "blocks": [{"type": "FISBlock", "name": "ctrl", "params": {"fis": data}}],
+        "connections": [],
+    }
+    with pytest.raises(SpecError) as exc:
+        from_spec(spec)
+    assert exc.value.block == "ctrl"
+    assert "ctrl" in str(exc.value) and "sigmoid" in str(exc.value)
+
+
+def test_unknown_block_type_attributes_the_block():
+    with pytest.raises(SpecError) as exc:
+        from_spec({"version": 1, "blocks": [{"type": "Wat", "name": "w"}]})
+    assert exc.value.block == "w"
+
+
 def test_unknown_block_type_lists_the_palette():
     with pytest.raises(SpecError, match="registered:"):
         from_spec({"version": 1, "blocks": [{"type": "Wat", "name": "w"}]})
