@@ -44,6 +44,7 @@ Outputs
 - figures/simulation.png           — application example at resonance
 - figures/frequency_response.png   — uncontrolled vs. controlled across freq
 - diagram.json                     — block-diagram spec (editor fixture)
+- diagram.mmd                      — Mermaid block diagram, embedded in REPORT.md
 """
 
 from __future__ import annotations
@@ -447,8 +448,10 @@ def main() -> None:
     # The diagram doubles as a fixture for the block editor. The FIS itself is
     # still a live object (its terms are closures), so it round-trips as a
     # `$provide` placeholder until membership functions become declarative.
-    spec_path = save(build_diagram(fuzzy_controller(), name="ex2_sdof_fuzzy"),
-                     here / "diagram.json")
+    diagram = build_diagram(fuzzy_controller(), name="ex2_sdof_fuzzy")
+    spec_path = save(diagram, here / "diagram.json")
+    mmd_path = here / "diagram.mmd"
+    mmd_path.write_text(diagram.to_mermaid() + "\n")
 
     o, f = metrics["open"], metrics["fuzzy"]
     print(f"Plant: m={M:g} kg, k={K:g} N/m, zeta={ZETA} → omega_n={OMEGA_N:g} rad/s")
@@ -469,6 +472,7 @@ def main() -> None:
     print()
     print(f"Figures saved to: {figdir}")
     print(f"Diagram spec saved to: {spec_path}")
+    print(f"Block diagram saved to: {mmd_path}")
 
 
 if __name__ == "__main__":

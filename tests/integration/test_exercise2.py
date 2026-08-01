@@ -137,6 +137,22 @@ def test_committed_diagram_json_reproduces_the_in_memory_diagram():
     assert np.array_equal(a.col("plant.y", 0), b.col("plant.y", 0))
 
 
+def test_mermaid_figure_matches_the_executable_diagram():
+    """The published block diagram is generated, so it must not have drifted."""
+    committed = (EXERCISE / "diagram.mmd").read_text().strip()
+    fresh = S.build_diagram(
+        S.fuzzy_controller(), name="ex2_sdof_fuzzy"
+    ).to_mermaid().strip()
+    assert committed == fresh
+
+
+def test_report_embeds_the_current_mermaid_diagram():
+    """REPORT.md §8.1 must hold exactly what diagram.mmd holds."""
+    mmd = (EXERCISE / "diagram.mmd").read_text().strip()
+    report = (EXERCISE / "REPORT.md").read_text()
+    assert f"```mermaid\n{mmd}\n```" in report
+
+
 def test_committed_diagram_json_is_in_sync_with_the_script():
     """Regenerating the spec must not change it — the file cannot drift."""
     from fuzzy.spec import to_spec

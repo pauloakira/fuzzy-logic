@@ -160,6 +160,32 @@ The metric window itself is now validated automatically: `fuzzy.metrics.steady_s
 
 ---
 
+### 8.1 Block diagram
+
+Generated from the executable diagram by `Diagram.to_mermaid()`, so it cannot
+drift from the model that produced the numbers in §9. Skewed boxes are sources,
+rounded boxes are sampled (zero-order-held at 5 ms) blocks, square boxes are
+continuous.
+
+```mermaid
+flowchart LR
+    force[/"force<br/>Harmonic"\]
+    total["total<br/>Sum"]
+    plant["plant<br/>StateSpacePlant"]
+    pos["pos<br/>Select"]
+    vel["vel<br/>Select"]
+    controller(["controller<br/>FISBlock"])
+    actuator["actuator<br/>Saturation"]
+    force -->|y→ext| total
+    total --> plant
+    plant --> pos
+    plant --> vel
+    pos -->|y→deslocamento| controller
+    vel -->|y→velocidade| controller
+    controller --> actuator
+    actuator -->|y→ctrl| total
+```
+
 ## 9. View 4 — Application example of the control system
 
 Harmonic excitation at resonance ($\omega = \omega_n = 10$ rad/s) — the most severe case. The system starts from rest, $x(0) = \dot x(0) = 0$.

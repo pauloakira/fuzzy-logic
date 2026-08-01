@@ -1,0 +1,16 @@
+flowchart LR
+    force[/"force<br/>Harmonic"\]
+    total["total<br/>Sum"]
+    plant["plant<br/>StateSpacePlant"]
+    pos["pos<br/>Select"]
+    vel["vel<br/>Select"]
+    controller(["controller<br/>FISBlock"])
+    actuator["actuator<br/>Saturation"]
+    force -->|y→ext| total
+    total --> plant
+    plant --> pos
+    plant --> vel
+    pos -->|y→deslocamento| controller
+    vel -->|y→velocidade| controller
+    controller --> actuator
+    actuator -->|y→ctrl| total

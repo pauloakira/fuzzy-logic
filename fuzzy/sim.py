@@ -292,16 +292,28 @@ class Diagram:
         decaying = [r for r in rates if r > tol]
         return 1.0 / min(decaying) if decaying else None
 
-    def to_mermaid(self) -> str:
-        """Mermaid flowchart of the wiring (phase 3 uses this for the reports)."""
+    def to_mermaid(self, types: bool = True) -> str:
+        """Mermaid flowchart of the wiring, for reports and documentation.
+
+        Generated from the executable diagram, so a published figure cannot
+        drift from the model that produced the numbers beside it. Sources are
+        drawn as skewed boxes and sampled (zero-order-held) blocks as rounded
+        ones, so the continuous/discrete split is visible at a glance.
+        """
         lines = ["flowchart LR"]
         for b in self._blocks:
-            shape = "[/{}\\]" if not b.inputs else ("([{}])" if b.discrete else "[{}]")
-            lines.append(f"    {b.name}{shape.format(b.name)}")
+            label = f"{b.name}<br/>{type(b).__name__}" if types else b.name
+            if not b.inputs:
+                shape = f'[/"{label}"\\]'
+            elif b.discrete:
+                shape = f'(["{label}"])'
+            else:
+                shape = f'["{label}"]'
+            lines.append(f"    {b.name}{shape}")
         for (db, dp), (sb, sp) in self._conns.items():
             named = len(sb.outputs) > 1 or len(db.inputs) > 1
-            label = f"|{sp}→{dp}|" if named else ""
-            lines.append(f"    {sb.name} -->{label} {db.name}")
+            arrow = f"-->|{sp}→{dp}|" if named else "-->"
+            lines.append(f"    {sb.name} {arrow} {db.name}")
         return "\n".join(lines)
 
 
