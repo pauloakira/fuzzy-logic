@@ -1,5 +1,7 @@
 # Fuzzy Logic
 
+[![CI](https://github.com/pauloakira/fuzzy-logic/actions/workflows/ci.yml/badge.svg)](https://github.com/pauloakira/fuzzy-logic/actions/workflows/ci.yml)
+
 Fuzzy logic research — classical fuzzy inference systems (Mamdani / Sugeno / Tsukamoto) and neuro-fuzzy systems (ANFIS), plus a small block-diagram simulation core for putting controllers in a loop with a plant.
 
 ## Repository structure
@@ -71,6 +73,17 @@ pytest -q
 ruff check fuzzy/ tests/ exercises/
 mypy
 ```
+
+These three commands are exactly what CI runs, on Python 3.11 / 3.12 / 3.13
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+`tests/unit/` covers the library in pieces; `tests/integration/` pins the numbers
+published in the exercise reports, so a refactor that quietly moves a documented
+result fails in CI rather than in a reader's eye.
+
+`ruff format` is deliberately **not** enforced: the rule matrices in the exercise
+scripts use manual column alignment that reads as a table, and the formatter would
+flatten it. Lint, types, and tests are gated; layout is not.
 
 ## Block diagrams
 

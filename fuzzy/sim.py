@@ -15,6 +15,7 @@ multi-rate sample-time propagation.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -253,6 +254,28 @@ class Diagram:
 
     # -- analysis --
 
+    def fastest_mode(self) -> float | None:
+        """Largest `|eigenvalue|` over LTI blocks — what bounds the step size."""
+        mags: list[float] = []
+        for b in self._blocks:
+            eig = getattr(b, "eigenvalues", None)
+            if eig is None:
+                continue
+            mags.extend(abs(complex(v)) for v in eig())
+        return max(mags) if mags else None
+
+    def stability_limit(self) -> float | None:
+        """Largest integration step classical RK4 stays stable at, or None.
+
+        RK4's stability region reaches `|lambda h| = 2sqrt(2) ~ 2.83` along the
+        imaginary axis, which is the binding case for a lightly damped
+        oscillator. Beyond it the solution grows without bound and overflows to
+        `inf` silently, so `simulate()` warns rather than letting a plausible
+        looking run be garbage.
+        """
+        fastest = self.fastest_mode()
+        return RK4_STABILITY_RADIUS / fastest if fastest else None
+
     def slowest_tau(self, tol: float = 1e-9) -> float | None:
         """Slowest open-loop time constant `1 / min|Re(eig)|` over LTI blocks.
 
@@ -286,6 +309,9 @@ class Diagram:
 
 Deriv = Callable[[float, NDArray[np.float64]], NDArray[np.float64]]
 
+RK4_STABILITY_RADIUS = 2.0 * np.sqrt(2.0)
+"""Classical RK4 stays stable while `|lambda h|` is below this on the imaginary axis."""
+
 
 def rk4_step(
     f: Deriv, t: float, z: NDArray[np.float64], h: float
@@ -318,6 +344,18 @@ def simulate(
     diagram.reset()
     n_steps = int(round((t_max - t0) / dt_control)) + 1
     h = dt_control / n_substeps
+
+    limit = diagram.stability_limit()
+    if limit is not None and h > limit:
+        warnings.warn(
+            f"integration step {h:g} s exceeds the RK4 stability limit "
+            f"{limit:.4g} s for this diagram's fastest mode "
+            f"(|lambda| = {diagram.fastest_mode():.4g} rad/s). The run will grow "
+            f"without bound. Reduce dt_control, or raise n_substeps to at least "
+            f"{int(np.ceil(dt_control / limit))}.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     z = diagram.initial_state()
     times = np.empty(n_steps)

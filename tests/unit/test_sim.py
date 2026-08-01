@@ -263,6 +263,37 @@ def test_slowest_tau_matches_plant_decay():
     assert d.slowest_tau() == pytest.approx(1.0 / (ZETA * OMEGA_N), rel=1e-12)
 
 
+def test_stability_limit_matches_rk4_theory():
+    """RK4 is stable while |lambda*h| < 2sqrt(2) on the imaginary axis."""
+    d = Diagram()
+    d.connect(Harmonic(amplitude=0.0, name="zero"), sdof_plant(M, 0.0, K))
+    assert d.fastest_mode() == pytest.approx(OMEGA_N)
+    assert d.stability_limit() == pytest.approx(2 * np.sqrt(2) / OMEGA_N)
+
+
+def test_simulate_warns_above_the_stability_limit():
+    """An unstable step overflows to inf silently; the warning is the only signal."""
+    d = Diagram()
+    d.connect(Harmonic(amplitude=0.0, name="zero"), sdof_plant(M, 0.0, K, x0=0.1))
+    with pytest.warns(UserWarning, match="exceeds the RK4 stability limit"):
+        with np.errstate(all="ignore"):
+            simulate(d, t_max=2.0, dt_control=0.35)
+
+
+def test_substeps_can_rescue_an_unstable_control_rate():
+    d = Diagram()
+    d.connect(Harmonic(amplitude=0.0, name="zero"), sdof_plant(M, 0.0, K, x0=0.1))
+    log = simulate(d, t_max=2.0, dt_control=0.35, n_substeps=2)  # must not warn
+    assert np.all(np.isfinite(log.col("plant.y", 0)))
+
+
+def test_stability_limit_is_none_without_lti_blocks():
+    d = Diagram()
+    d.connect(Harmonic(name="src"), Gain(1.0, name="g"))
+    assert d.stability_limit() is None
+    assert d.fastest_mode() is None
+
+
 def test_slowest_tau_is_none_without_lti_blocks():
     d = Diagram()
     d.connect(Harmonic(name="src"), Gain(1.0, name="g"))
