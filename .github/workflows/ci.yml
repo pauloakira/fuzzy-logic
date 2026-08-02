@@ -35,7 +35,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check fuzzy/ tests/ exercises/
+        run: ruff check fuzzy/ editor/ tests/ exercises/
 
       - name: Types
         run: mypy

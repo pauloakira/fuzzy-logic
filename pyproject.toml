@@ -12,13 +12,24 @@ dependencies = ["numpy>=1.26", "matplotlib>=3.8"]
 [project.optional-dependencies]
 # ANFIS work has not started; torch is not needed to run anything in the repo today.
 anfis = ["torch>=2.2"]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+# The block editor. Deliberately optional: `fuzzy.sim` must never import a web
+# framework, and a headless simulation run must not need one installed.
+editor = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "httpx2>=2.9",  # required by starlette's TestClient (it deprecated httpx)
+]
 
 [tool.setuptools]
-packages = ["fuzzy"]
+packages = ["fuzzy", "editor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# starlette's TestClient warns about httpx on import; it is not our warning.
 filterwarnings = ["error::UserWarning"]
 
 [tool.ruff]
@@ -32,5 +43,5 @@ select = ["E", "F", "I", "UP", "B"]
 # No `python_version` pin: it makes mypy parse the *installed* numpy stubs under
 # an older grammar, and numpy's stubs use 3.12+ `type` statements. Letting mypy
 # follow the running interpreter is also what the CI matrix actually wants.
-files = ["fuzzy"]
+files = ["fuzzy", "editor"]
 ignore_missing_imports = true

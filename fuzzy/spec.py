@@ -283,6 +283,13 @@ def from_spec(
             (sb, sp), (db, dp) = conn["from"], conn["to"]
         except (KeyError, ValueError) as exc:
             raise SpecError(f"malformed connection {conn!r}: {exc}") from None
+        for ref in (sb, db):
+            if ref not in {b.name for b in d.blocks}:
+                # A canvas produces this constantly: delete a block, leave its
+                # wires. It must be a structured error, not a bare KeyError.
+                raise SpecError(
+                    f"connection references unknown block {ref!r}", block=ref
+                )
         d.connect((d.block(sb), sp), (d.block(db), dp))
     return d
 

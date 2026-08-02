@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-6 implemented, 142 tests green, CI on 3.11/3.12/3.13
+**Status:** accepted — phases 1-6 and 7a-7b implemented, 168 tests green, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -491,8 +491,8 @@ stays NumPy + matplotlib and CI can still exercise the API.
 
 | Step | Deliverable | Exit criterion | Browser? |
 | --- | --- | --- | --- |
-| **7a** | Structured wiring errors (§11.4's diagram half) | `WiringError`/`AlgebraicLoopError` carry block and port references; tests assert them | no |
-| **7b** | Read-only HTTP API | `GET /palette`, `GET /diagram`, `POST /validate`, `POST /simulate` — all tested headlessly with `TestClient` | no |
+| ~~**7a**~~ | Structured wiring errors (§11.4's diagram half) | **Done** — errors carry block/port/related and the full loop | no |
+| ~~**7b**~~ | Read-only HTTP API | **Done** — `editor/api.py`, 21 headless tests in `tests/api/` | no |
 | **7c** | Canvas renders a diagram | exercise 2's `diagram.json` draws with correct node positions and wires | yes |
 | **7d** | Interactive editing | drag a node, edit a parameter, add/remove a block or wire, save — and the file on disk changes | yes |
 | **7e** | Run and plot in the browser | click Run, see the response curve for the edited diagram | yes |

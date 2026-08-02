@@ -285,6 +285,18 @@ def test_block_entry_missing_name_raises():
         from_spec({"version": 1, "blocks": [{"type": "Harmonic"}]})
 
 
+def test_connection_to_a_deleted_block_is_structured():
+    """The commonest canvas edit: remove a block, leave its wires behind."""
+    spec = {
+        "version": 1,
+        "blocks": [{"type": "Gain", "name": "g", "params": {"k": 1.0}}],
+        "connections": [{"from": ["ghost", "y"], "to": ["g", "u"]}],
+    }
+    with pytest.raises(SpecError, match="unknown block 'ghost'") as exc:
+        from_spec(spec)
+    assert exc.value.block == "ghost"
+
+
 def test_malformed_connection_raises():
     spec = {
         "version": 1,

@@ -85,6 +85,21 @@ result fails in CI rather than in a reader's eye.
 scripts use manual column alignment that reads as a table, and the formatter would
 flatten it. Lint, types, and tests are gated; layout is not.
 
+## Block editor API
+
+The block editor's backend is a small FastAPI app. It is optional — `fuzzy.sim`
+never imports a web framework, so a headless simulation run does not need it:
+
+```bash
+pip install -e ".[editor]"
+uvicorn editor.api:app --reload
+```
+
+`GET /api/palette` describes every registered block type, `GET /api/diagrams`
+lists the spec files in the repo, and `POST /api/validate` and `POST /api/simulate`
+take a spec document and return structured problems or decimated signals. It is
+tested headlessly in `tests/api/` — no browser required.
+
 ## Block diagrams
 
 Simulations are assembled as block diagrams rather than hand-written integration
