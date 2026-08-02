@@ -67,6 +67,11 @@ class SpecPayload(BaseModel):
     spec: dict[str, Any]
 
 
+class SavePayload(SpecPayload):
+    path: str
+    overwrite: bool = False
+
+
 class SimulatePayload(SpecPayload):
     t_max: float = Field(default=10.0, gt=0.0, le=MAX_T_MAX)
     dt_control: float = Field(default=0.005, gt=0.0)
@@ -180,10 +185,12 @@ def get_palette() -> dict[str, Any]:
 @app.get("/api/diagrams")
 def list_diagrams() -> dict[str, Any]:
     """Spec files discoverable in the repository, for an Open dialog."""
+    # `diagram*.json` rather than the exact name, so drafts saved by the editor
+    # are reopenable — otherwise saving produces a file you cannot get back to.
     found = sorted(
         str(p.relative_to(REPO_ROOT))
-        for p in REPO_ROOT.rglob("*.json")
-        if p.name == "diagram.json" and ".claude" not in p.parts
+        for p in REPO_ROOT.rglob("diagram*.json")
+        if ".claude" not in p.parts and "venv" not in p.parts
     )
     return {"diagrams": found}
 
@@ -201,6 +208,53 @@ def get_diagram(path: str) -> dict[str, Any]:
         raise HTTPException(422, detail={"error": f"invalid JSON: {exc}"}) from exc
     diagram = _build(raw)
     return {"path": path, "spec": to_spec(diagram), "ports": _ports(diagram)}
+
+
+@app.post("/api/diagram")
+def save_diagram(payload: SavePayload) -> dict[str, Any]:
+    """Write a spec to disk.
+
+    Two guards, both deliberate:
+
+    - The spec must build before anything is written. Saving a document that
+      cannot be loaded back turns an editing mistake into a broken file.
+    - Overwriting an existing file requires `overwrite`. The committed
+      `diagram.json` files are generated artefacts that integration tests assert
+      against, so an editor must not clobber one by accident. The client defaults
+      to a `.draft.json` path; replacing the original is a deliberate act.
+    """
+    import json
+
+    if not payload.path.endswith(".json"):
+        raise HTTPException(400, detail={"error": "path must end in .json"})
+
+    target = (REPO_ROOT / payload.path).resolve()
+    if not target.is_relative_to(REPO_ROOT):
+        raise HTTPException(
+            400, detail={"error": f"path escapes the repository: {payload.path}"}
+        )
+    if not target.parent.is_dir():
+        raise HTTPException(
+            400, detail={"error": f"no such directory: {target.parent.name}"}
+        )
+    if target.exists() and not payload.overwrite:
+        raise HTTPException(
+            409,
+            detail={
+                "error": f"{payload.path} already exists; pass overwrite to replace it",
+                "path": payload.path,
+            },
+        )
+
+    diagram = _build(payload.spec)  # 422 with structured detail if it will not load
+    normalised = to_spec(diagram)
+    target.write_text(json.dumps(normalised, indent=2) + "\n")
+    return {
+        "path": payload.path,
+        "bytes": target.stat().st_size,
+        "spec": normalised,
+        "ports": _ports(diagram),
+    }
 
 
 @app.post("/api/validate")

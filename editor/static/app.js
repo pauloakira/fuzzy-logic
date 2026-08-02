@@ -3,22 +3,19 @@
 // Plain ES modules, no build step: the repo stays installable with
 // `pip install -e .` alone, with nothing to compile and no node_modules.
 //
-// Every element the end-to-end tests assert on carries a `data-testid`, so the
-// tests key off stable hooks rather than markup structure or CSS classes.
+// The spec document is the single source of truth, in the browser exactly as on
+// disk (§2 of the design note). Every edit mutates `state.spec` and re-renders
+// from it; the canvas holds no position or wiring state of its own.
+//
+// Elements the end-to-end tests assert on carry `data-testid`, so the tests key
+// off stable hooks rather than markup structure.
 
 import { highlightProblems, renderDiagram } from "/static/canvas.js";
 
 const api = {
   async get(path) {
     const r = await fetch(path);
-    if (!r.ok) {
-      // The API answers failures with a structured detail object; surface what
-      // it says rather than a bare status code.
-      const detail = await r.json().catch(() => ({}));
-      const err = new Error(detail?.detail?.error || `${path} -> ${r.status}`);
-      err.block = detail?.detail?.block;
-      throw err;
-    }
+    if (!r.ok) throw await problem(r, path);
     return r.json();
   },
   async post(path, body) {
@@ -27,29 +24,55 @@ const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!r.ok && r.status !== 200) {
+      const parsed = await r.clone().json().catch(() => null);
+      if (parsed && parsed.detail) throw await problem(r, path);
+    }
     return r.json();
   },
 };
 
-function el(tag, attrs = {}, text = "") {
+async function problem(response, path) {
+  const body = await response.json().catch(() => ({}));
+  const detail = body?.detail || {};
+  const err = new Error(detail.error || `${path} -> ${response.status}`);
+  err.block = detail.block;
+  err.status = response.status;
+  return err;
+}
+
+const el = (tag, attrs = {}, text = "") => {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
   if (text) node.textContent = text;
   return node;
-}
-
-function set(testid, value) {
+};
+const byId = (id) => document.getElementById(id);
+const set = (testid, value) => {
   document.querySelector(`[data-testid="${testid}"]`).textContent = String(value);
-}
+};
 
-let palette = {};
+const state = {
+  path: null,
+  spec: null,
+  ports: {},
+  palette: {},
+  selected: null, // {kind: "block"|"wire", value}
+  dirty: false,
+};
 
-async function renderPalette() {
+// ----- palette and diagram list ----------------------------------------------
+
+async function loadPalette() {
   const { blocks } = await api.get("/api/palette");
-  palette = blocks;
-  window.__palette = blocks;  // handle for the end-to-end tests
-  const list = document.getElementById("palette");
+  state.palette = blocks;
+  window.__palette = blocks;
+
+  const list = byId("palette");
   list.replaceChildren();
+  const chooser = byId("add-block");
+  chooser.replaceChildren(el("option", { value: "" }, "block…"));
+
   for (const [name, meta] of Object.entries(blocks)) {
     const required = meta.params.filter((p) => p.required).map((p) => p.name);
     const item = el("li", { "data-block-type": name });
@@ -66,13 +89,14 @@ async function renderPalette() {
       );
     }
     list.appendChild(item);
+    chooser.appendChild(el("option", { value: name }, name));
   }
   return Object.keys(blocks).length;
 }
 
-async function renderDiagramList() {
+async function loadDiagramList() {
   const { diagrams } = await api.get("/api/diagrams");
-  const list = document.getElementById("diagrams");
+  const list = byId("diagrams");
   list.replaceChildren();
   for (const path of diagrams) {
     const button = el("button", { type: "button", "data-diagram-path": path }, path);
@@ -82,68 +106,195 @@ async function renderDiagramList() {
   return diagrams;
 }
 
-function showSelection(block) {
-  document.getElementById("selection").hidden = false;
+// ----- editing ----------------------------------------------------------------
+
+function markDirty(dirty = true) {
+  state.dirty = dirty;
+  byId("dirty").hidden = !dirty;
+  document.body.dataset.dirty = String(dirty);
+}
+
+/** Apply a change to the spec, then revalidate and redraw from it. */
+async function mutate(change) {
+  change(state.spec);
+  markDirty(true);
+  set("save-status", "");
+  await refresh();
+}
+
+function uniqueName(base) {
+  const taken = new Set(state.spec.blocks.map((b) => b.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i += 1) if (!taken.has(`${base}${i}`)) return `${base}${i}`;
+}
+
+function defaultParams(type) {
+  const params = {};
+  for (const p of state.palette[type]?.params || []) {
+    // A required parameter has no default the palette can offer; 0 is a
+    // placeholder the user must replace, and validation will say so if not.
+    params[p.name] = p.default ?? (p.required ? 0 : null);
+  }
+  return params;
+}
+
+function addBlock(type) {
+  const name = uniqueName(type.toLowerCase());
+  const xs = state.spec.blocks.map((b) => b.layout?.x ?? 0);
+  mutate((spec) => {
+    spec.blocks.push({
+      type,
+      name,
+      params: defaultParams(type),
+      layout: { x: Math.max(0, ...xs) + 170, y: 40 },
+    });
+  });
+}
+
+function deleteSelected() {
+  const sel = state.selected;
+  if (!sel) return;
+  if (sel.kind === "block") {
+    const name = sel.value.name;
+    mutate((spec) => {
+      spec.blocks = spec.blocks.filter((b) => b.name !== name);
+      // Wires to a deleted block would be dangling references, which the API
+      // rejects outright — remove them with it.
+      spec.connections = spec.connections.filter(
+        (c) => c.from[0] !== name && c.to[0] !== name
+      );
+    });
+  } else {
+    const { from, to } = sel.value;
+    mutate((spec) => {
+      spec.connections = spec.connections.filter(
+        (c) => !(c.from[0] === from[0] && c.from[1] === from[1] &&
+                 c.to[0] === to[0] && c.to[1] === to[1])
+      );
+    });
+  }
+  clearSelection();
+}
+
+function connect(conn) {
+  mutate((spec) => {
+    // An input takes one source; replacing is friendlier than an error here,
+    // since the API would reject the second wire anyway.
+    spec.connections = spec.connections.filter(
+      (c) => !(c.to[0] === conn.to[0] && c.to[1] === conn.to[1])
+    );
+    spec.connections.push(conn);
+  });
+}
+
+// ----- selection panel --------------------------------------------------------
+
+function clearSelection() {
+  state.selected = null;
+  byId("selection").hidden = true;
+  byId("delete-selected").disabled = true;
+}
+
+function selectBlock(block) {
+  state.selected = { kind: "block", value: block };
+  byId("delete-selected").disabled = false;
+  byId("selection").hidden = false;
   set("selected-name", block.name);
   set("selected-type", block.type);
+
   const dl = document.querySelector('[data-testid="selected-params"]');
   dl.replaceChildren();
   for (const [key, value] of Object.entries(block.params || {})) {
     dl.appendChild(el("dt", {}, key));
-    // A FIS or a matrix is not a one-line value; summarise rather than dump it.
-    const text =
-      value && typeof value === "object" && !Array.isArray(value)
-        ? `{${Object.keys(value).join(", ")}}`
-        : JSON.stringify(value);
-    dl.appendChild(el("dd", {}, text.length > 60 ? `${text.slice(0, 57)}…` : text));
+    const dd = el("dd");
+    dd.appendChild(paramField(block, key, value));
+    dl.appendChild(dd);
   }
 }
 
-async function openDiagram(path) {
-  const status = document.getElementById("status");
-  status.textContent = `loading ${path}\u2026`;
-  try {
-    await loadDiagram(path);
-    status.textContent = "ready";
-    status.dataset.ready = "true";
-  } catch (err) {
-    // A spec can name a block type this build does not have, or be malformed.
-    // Say so, name the block if the API named one, and leave no stale drawing.
-    document.getElementById("canvas").replaceChildren();
-    document.getElementById("canvas-empty").hidden = false;
-    document.getElementById("canvas-empty").textContent =
-      err.block ? `${err.message} (block: ${err.block})` : err.message;
-    document.getElementById("summary").hidden = true;
-    document.getElementById("selection").hidden = true;
-    status.textContent = `could not open ${path}`;
-    status.dataset.ready = "error";
-  }
+function selectWire(conn) {
+  state.selected = { kind: "wire", value: conn };
+  byId("delete-selected").disabled = false;
+  byId("selection").hidden = false;
+  set("selected-name", `${conn.from.join(".")} → ${conn.to.join(".")}`);
+  set("selected-type", "connection");
+  document.querySelector('[data-testid="selected-params"]').replaceChildren();
 }
 
-async function loadDiagram(path) {
-  const { spec, ports } = await api.get(
-    `/api/diagram?path=${encodeURIComponent(path)}`
-  );
-  const report = await api.post("/api/validate", { spec });
+/**
+ * One editor per parameter. Scalars get a typed input; anything structured — a
+ * matrix, or a whole FIS — gets JSON, which is honest about what it is rather
+ * than pretending a nested document fits in a form field.
+ */
+function paramField(block, key, value) {
+  const scalar = value === null || ["number", "string", "boolean"].includes(typeof value);
+  const field = scalar
+    ? el("input", {
+        type: typeof value === "number" ? "number" : "text",
+        step: "any",
+        value: value === null ? "" : String(value),
+        "data-param": key,
+      })
+    : el("textarea", { rows: "3", "data-param": key });
+  if (!scalar) field.value = JSON.stringify(value);
 
-  // Ports come resolved per block instance from the API — Sum's depend on its
-  // `ports` parameter and FISBlock's on the FIS, so the class cannot supply them.
-  const canvas = document.getElementById("canvas");
-  const drawn = renderDiagram(canvas, spec, ports, showSelection);
-  document.getElementById("canvas-empty").hidden = true;
+  field.addEventListener("change", () => {
+    let parsed;
+    if (scalar && typeof value === "number") {
+      parsed = field.value === "" ? null : Number(field.value);
+      if (parsed !== null && Number.isNaN(parsed)) return invalid(field);
+    } else if (scalar && typeof value === "boolean") {
+      parsed = field.value === "true";
+    } else if (scalar) {
+      parsed = field.value;
+    } else {
+      try {
+        parsed = JSON.parse(field.value);
+      } catch {
+        return invalid(field);
+      }
+    }
+    field.removeAttribute("data-invalid");
+    mutate((spec) => {
+      spec.blocks.find((b) => b.name === block.name).params[key] = parsed;
+    });
+  });
+  return field;
+}
+
+function invalid(field) {
+  field.setAttribute("data-invalid", "true");
+  set("save-status", "fix the highlighted field");
+}
+
+// ----- render -----------------------------------------------------------------
+
+async function refresh() {
+  const report = await api.post("/api/validate", { spec: state.spec });
+  state.ports = report.ports || {};
+
+  const canvas = byId("canvas");
+  const drawn = renderDiagram(canvas, state.spec, state.ports, {
+    onSelect: selectBlock,
+    onWireSelect: selectWire,
+    onConnect: connect,
+    // The canvas moves the node itself during the drag; this fires once, at the
+    // end, when the new position has been written into the spec.
+    onMoveEnd: () => markDirty(true),
+  });
   canvas.dataset.nodes = String(drawn.nodes);
   canvas.dataset.wires = String(drawn.wires);
 
-  document.getElementById("summary-name").textContent = spec.name || path;
-  set("block-count", spec.blocks.length);
-  set("connection-count", spec.connections.length);
-  set("state-count", report.n_states);
+  set("block-count", state.spec.blocks.length);
+  set("connection-count", state.spec.connections.length);
+  set("state-count", report.n_states ?? 0);
+  byId("summary-name").textContent = state.spec.name || state.path;
 
-  const advice = document.getElementById("advice");
+  const advice = byId("advice");
   advice.replaceChildren();
   for (const line of report.advice || []) advice.appendChild(el("li", {}, line));
 
-  const validity = document.getElementById("validity");
+  const validity = byId("validity");
   if (report.ok) {
     validity.textContent = "valid";
     validity.dataset.ok = "true";
@@ -153,19 +304,107 @@ async function loadDiagram(path) {
     validity.dataset.ok = "false";
     validity.dataset.block = first.block || "";
   }
-  // Structured problem references exist precisely so the canvas can point at
-  // the offending node rather than describe it.
+  // Structured problem references exist so the canvas can point at the offending
+  // node rather than describe it.
   highlightProblems(canvas, report.problems || []);
 
-  document.getElementById("summary").hidden = false;
-  document.getElementById("selection").hidden = true;
-  window.__lastSpec = spec;
+  byId("summary").hidden = false;
+  byId("toolbar").hidden = false;
+  window.__lastSpec = state.spec;
+}
+
+async function openDiagram(path) {
+  const status = byId("status");
+  status.textContent = `loading ${path}…`;
+  try {
+    const { spec, ports } = await api.get(
+      `/api/diagram?path=${encodeURIComponent(path)}`
+    );
+    state.path = path;
+    state.spec = spec;
+    state.ports = ports;
+    clearSelection();
+    markDirty(false);
+    byId("save-path").value = path.replace(/\.json$/, ".draft.json");
+    set("save-status", "");
+    byId("canvas-empty").hidden = true;
+    await refresh();
+    status.textContent = "ready";
+    status.dataset.ready = "true";
+  } catch (err) {
+    // A spec can name a block type this build does not have, or be malformed.
+    byId("canvas").replaceChildren();
+    byId("canvas-empty").hidden = false;
+    byId("canvas-empty").textContent =
+      err.block ? `${err.message} (block: ${err.block})` : err.message;
+    byId("summary").hidden = true;
+    byId("toolbar").hidden = true;
+    clearSelection();
+    status.textContent = `could not open ${path}`;
+    status.dataset.ready = "error";
+  }
+}
+
+async function save() {
+  const path = byId("save-path").value.trim();
+  set("save-status", "saving…");
+  try {
+    let r = await fetch("/api/diagram", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, spec: state.spec }),
+    });
+    if (r.status === 409) {
+      // Overwriting an existing file is deliberate, never incidental.
+      if (!window.confirm(`${path} exists. Replace it?`)) {
+        set("save-status", "not saved");
+        return;
+      }
+      r = await fetch("/api/diagram", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, spec: state.spec, overwrite: true }),
+      });
+    }
+    if (!r.ok) throw await problem(r, "/api/diagram");
+    const body = await r.json();
+    markDirty(false);
+    set("save-status", `saved ${body.bytes} bytes to ${body.path}`);
+    document.body.dataset.saved = body.path;
+    await loadDiagramList();
+  } catch (err) {
+    set("save-status", `not saved: ${err.message}`);
+  }
+}
+
+// ----- wiring up --------------------------------------------------------------
+
+function bindToolbar() {
+  byId("add-block").addEventListener("change", (e) => {
+    if (e.target.value) {
+      addBlock(e.target.value);
+      e.target.value = "";
+    }
+  });
+  byId("delete-selected").addEventListener("click", deleteSelected);
+  byId("save").addEventListener("click", save);
+  document.addEventListener("keydown", (e) => {
+    const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
+    if (!typing && (e.key === "Delete" || e.key === "Backspace") && state.selected) {
+      e.preventDefault();
+      deleteSelected();
+    }
+  });
+  window.addEventListener("beforeunload", (e) => {
+    if (state.dirty) e.preventDefault();
+  });
 }
 
 async function main() {
-  const status = document.getElementById("status");
+  const status = byId("status");
   try {
-    const [count, diagrams] = await Promise.all([renderPalette(), renderDiagramList()]);
+    bindToolbar();
+    const [count, diagrams] = await Promise.all([loadPalette(), loadDiagramList()]);
     status.textContent = `ready — ${count} block types, ${diagrams.length} diagrams`;
     status.dataset.ready = "true";
   } catch (err) {

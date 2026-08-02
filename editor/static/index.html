@@ -44,6 +44,20 @@
 
     <section id="canvas-panel">
       <h2>Canvas</h2>
+      <div id="toolbar" data-testid="toolbar" hidden>
+        <label>Add
+          <select id="add-block" data-testid="add-block"></select>
+        </label>
+        <button type="button" id="delete-selected" data-testid="delete-selected"
+                disabled>Delete selected</button>
+        <span id="dirty" data-testid="dirty" hidden>unsaved changes</span>
+        <span class="spacer"></span>
+        <label>Save to
+          <input type="text" id="save-path" data-testid="save-path" size="34">
+        </label>
+        <button type="button" id="save" data-testid="save">Save</button>
+        <span id="save-status" data-testid="save-status"></span>
+      </div>
       <svg id="canvas" data-testid="canvas" role="img"
            aria-label="Block diagram"></svg>
       <p id="canvas-empty" data-testid="canvas-empty">Choose a diagram to draw it.</p>

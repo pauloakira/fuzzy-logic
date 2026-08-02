@@ -86,6 +86,17 @@ function nodePath(block) {
   });
 }
 
+/** Convert a pointer event to diagram coordinates. */
+function toDiagram(root, event) {
+  const ctm = root.getScreenCTM();
+  if (!ctm) return { x: 0, y: 0 };
+  const p = root.createSVGPoint ? root.createSVGPoint() : new DOMPoint();
+  p.x = event.clientX;
+  p.y = event.clientY;
+  const q = p.matrixTransform(ctm.inverse());
+  return { x: q.x, y: q.y };
+}
+
 function wirePath(from, to) {
   // Horizontal-tangent cubic: leaves an output rightwards, enters an input
   // leftwards, so feedback wires that run backwards stay readable.
@@ -97,7 +108,7 @@ function wirePath(from, to) {
  * Draw `spec` into `root` (an <svg>). Returns a small report the caller and the
  * tests can assert on.
  */
-export function renderDiagram(root, spec, ports = {}, onSelect = null) {
+export function renderDiagram(root, spec, ports = {}, handlers = {}) {
   root.replaceChildren();
   const unplaced = positions(spec);
   const byName = new Map();
@@ -130,8 +141,21 @@ export function renderDiagram(root, spec, ports = {}, onSelect = null) {
         "data-wire": `${srcName}.${srcPort}->${dstName}.${dstPort}`,
         "data-from": srcName,
         "data-to": dstName,
+        tabindex: "0",
       })
     );
+    const path = wireLayer.lastChild;
+    const pick = () => {
+      for (const w of root.querySelectorAll(".wire[data-selected]")) {
+        w.removeAttribute("data-selected");
+      }
+      path.setAttribute("data-selected", "true");
+      handlers.onWireSelect?.(conn);
+    };
+    path.addEventListener("click", pick);
+    path.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); }
+    });
     drawnWires += 1;
   }
 
@@ -161,13 +185,20 @@ export function renderDiagram(root, spec, ports = {}, onSelect = null) {
       const names = block._ports[side];
       names.forEach((port, i) => {
         const p = portPosition(block, side, i, names.length);
-        g.appendChild(
-          svg("circle", {
-            cx: p.x, cy: p.y, r: NODE.portRadius,
-            class: `port port-${side}`,
-            "data-port": `${block.name}.${port}`,
-          })
-        );
+        const dot = svg("circle", {
+          cx: p.x, cy: p.y, r: NODE.portRadius,
+          class: `port port-${side}`,
+          "data-port": `${block.name}.${port}`,
+          "data-side": side,
+        });
+        if (side === "outputs" && handlers.onConnect) {
+          dot.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();  // not a node drag
+            startWire(root, block, port, p, handlers);
+          });
+        }
+        g.appendChild(dot);
       });
     }
 
@@ -176,11 +207,49 @@ export function renderDiagram(root, spec, ports = {}, onSelect = null) {
         other.removeAttribute("data-selected");
       }
       g.setAttribute("data-selected", "true");
-      onSelect?.(block);
+      handlers.onSelect?.(block);
     };
     g.addEventListener("click", select);
     g.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
+    });
+
+    // Drag to reposition. The move is written into the spec's `layout`, which is
+    // the only place position lives — the canvas owns no state of its own.
+    g.addEventListener("pointerdown", (event) => {
+      if (event.target.classList.contains("port")) return; // that starts a wire
+      event.preventDefault();
+      select();
+      const start = toDiagram(root, event);
+      const origin = { x: block._pos.x, y: block._pos.y };
+      let moved = false;
+      g.setPointerCapture(event.pointerId);
+
+      const onMove = (e) => {
+        const now = toDiagram(root, e);
+        const dx = now.x - start.x;
+        const dy = now.y - start.y;
+        if (!moved && Math.hypot(dx, dy) < 3) return; // ignore click jitter
+        moved = true;
+        // Move by transform and redraw only the wires that touch this node.
+        // Re-rendering the canvas mid-drag would destroy the very element
+        // holding the pointer capture, ending the drag after one frame.
+        block._pos.x = origin.x + dx;
+        block._pos.y = origin.y + dy;
+        g.setAttribute("transform", `translate(${dx} ${dy})`);
+        redrawWiresFor(root, spec, byName, block.name);
+      };
+      const onUp = () => {
+        g.releasePointerCapture(event.pointerId);
+        g.removeEventListener("pointermove", onMove);
+        g.removeEventListener("pointerup", onUp);
+        if (!moved) return;
+        // Position lives in the spec and nowhere else.
+        block.layout = { x: Math.round(block._pos.x), y: Math.round(block._pos.y) };
+        handlers.onMoveEnd?.(block);
+      };
+      g.addEventListener("pointermove", onMove);
+      g.addEventListener("pointerup", onUp);
     });
 
     nodeLayer.appendChild(g);
@@ -188,6 +257,65 @@ export function renderDiagram(root, spec, ports = {}, onSelect = null) {
 
   fitViewBox(root, spec);
   return { nodes: spec.blocks.length, wires: drawnWires, unplaced };
+}
+
+/** Recompute the `d` of every wire touching `name`, from current positions. */
+function redrawWiresFor(root, spec, byName, name) {
+  for (const conn of spec.connections) {
+    const [srcName, srcPort] = conn.from;
+    const [dstName, dstPort] = conn.to;
+    if (srcName !== name && dstName !== name) continue;
+    const src = byName.get(srcName);
+    const dst = byName.get(dstName);
+    if (!src || !dst) continue;
+    const path = root.querySelector(
+      `[data-wire="${srcName}.${srcPort}->${dstName}.${dstPort}"]`
+    );
+    if (!path) continue;
+    const si = Math.max(0, src._ports.outputs.indexOf(srcPort));
+    const di = Math.max(0, dst._ports.inputs.indexOf(dstPort));
+    path.setAttribute(
+      "d",
+      wirePath(
+        portPosition(src, "outputs", si, src._ports.outputs.length || 1),
+        portPosition(dst, "inputs", di, dst._ports.inputs.length || 1)
+      )
+    );
+  }
+}
+
+/** Drag from an output port; drop on an input port to connect. */
+function startWire(root, srcBlock, srcPort, from, handlers) {
+  const ghost = svg("path", { class: "wire wire-ghost", "data-testid": "wire-ghost" });
+  root.appendChild(ghost);
+
+  const move = (e) => {
+    const to = toDiagram(root, e);
+    ghost.setAttribute("d", wirePath(from, to));
+  };
+  const up = (e) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    ghost.remove();
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const port = target?.closest?.(".port-inputs")?.dataset?.port;
+    if (!port) return;                       // dropped on nothing; no-op
+    const [dstName, dstPort] = splitPort(port);
+    if (dstName === srcBlock.name) return;   // no self-connection
+    handlers.onConnect({
+      from: [srcBlock.name, srcPort],
+      to: [dstName, dstPort],
+    });
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+/** `"block.port"` -> `["block", "port"]`, splitting on the *last* dot so block
+ *  names containing dots still resolve. */
+function splitPort(id) {
+  const i = id.lastIndexOf(".");
+  return [id.slice(0, i), id.slice(i + 1)];
 }
 
 /** Size the viewBox to the drawn content, with a margin. */

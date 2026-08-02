@@ -57,10 +57,17 @@ def page_errors(page):
     """
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
-    page.on(
-        "console",
-        lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
-        if msg.type == "error"
-        else None,
-    )
+
+    def on_console(msg):
+        if msg.type != "error":
+            return
+        # The browser logs every non-2xx response as a console error, but this
+        # app handles 4xx deliberately — a 409 asking to confirm an overwrite, a
+        # 422 refusing an unloadable spec. Those are features under test, not
+        # faults. Uncaught exceptions still fail, which is the point.
+        if "Failed to load resource" in msg.text:
+            return
+        errors.append(f"console.{msg.type}: {msg.text}")
+
+    page.on("console", on_console)
     yield errors

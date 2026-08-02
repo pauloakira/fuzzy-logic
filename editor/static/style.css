@@ -76,9 +76,58 @@ aside section + section { margin-top: 1.25rem; }
 
 #canvas-empty { color: var(--muted); }
 
+/* An id selector outranks the UA's `[hidden] { display: none }`, so hiding
+   has to be restated here or the toolbar shows before a diagram is loaded. */
+#toolbar[hidden] { display: none; }
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.9em;
+}
+#toolbar .spacer { flex: 1 1 auto; }
+#toolbar label { color: var(--muted); }
+#toolbar select, #toolbar input, #toolbar button {
+  font: inherit;
+  color: var(--fg);
+  background: var(--node-fill);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+}
+#toolbar button { cursor: pointer; }
+#toolbar button:disabled { opacity: 0.45; cursor: default; }
+#toolbar button:not(:disabled):hover { border-color: var(--accent); }
+[data-testid="dirty"] { color: var(--bad); }
+[data-testid="save-status"] { color: var(--muted); }
+
+[data-testid="selected-params"] input,
+[data-testid="selected-params"] textarea {
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+  width: 100%;
+  color: var(--fg);
+  background: var(--node-fill);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.15rem 0.3rem;
+}
+[data-testid="selected-params"] [data-invalid] { border-color: var(--bad); }
+
+.node { cursor: grab; }
+.node:active { cursor: grabbing; }
+.wire { cursor: pointer; }
+.wire[data-selected] { stroke: var(--accent); stroke-width: 2.5; }
+.wire:focus { outline: none; }
+.wire-ghost { stroke: var(--accent); stroke-dasharray: 4 3; pointer-events: none; }
+.port-outputs { cursor: crosshair; }
+
 /* --- nodes --- */
 
-.node { cursor: pointer; }
 .node .node-shape {
   fill: var(--node-fill);
   stroke: var(--line);

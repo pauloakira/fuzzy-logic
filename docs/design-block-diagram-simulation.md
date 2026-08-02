@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-6 and 7a-7c implemented; 175 tests plus 22 browser
+**Status:** accepted — phases 1-6 and 7a-7d implemented; 175 tests plus 47 browser
 end-to-end tests, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
@@ -496,7 +496,7 @@ stays NumPy + matplotlib and CI can still exercise the API.
 | ~~**7a**~~ | Structured wiring errors (§11.4's diagram half) | **Done** — errors carry block/port/related and the full loop | no |
 | ~~**7b**~~ | Read-only HTTP API | **Done** — `editor/api.py`, 21 headless tests in `tests/api/` | no |
 | ~~**7c**~~ | Canvas renders a diagram | **Done** — SVG canvas, node selection, 14 browser tests | yes |
-| **7d** | Interactive editing | drag a node, edit a parameter, add/remove a block or wire, save — and the file on disk changes | yes |
+| ~~**7d**~~ | Interactive editing | **Done** — drag, edit, add/remove, wire, save; 25 browser tests | yes |
 | **7e** | Run and plot in the browser | click Run, see the response curve for the edited diagram | yes |
 | **7f** | Fuzzy controller editor | drag MF breakpoints, edit the rule grid, watch the control surface change | yes |
 

@@ -133,13 +133,23 @@ def test_a_node_can_be_selected_from_the_keyboard(page: Page, server: str):
     expect(node).to_have_attribute("data-selected", "true")
 
 
-def test_selecting_a_fis_block_summarises_rather_than_dumps_it(page: Page, server: str):
-    """The controller's `fis` parameter is a 25-rule document, not a value."""
+def test_selecting_a_fis_block_exposes_it_as_editable_json(page: Page, server: str):
+    """The controller's `fis` is a 25-rule document.
+
+    It gets a JSON textarea rather than a one-line field — honest about what it
+    is, and editable, which is what step 7f will build on.
+    """
+    import json
+
     open_diagram(page, server)
     page.locator(".node[data-block='controller']").click()
     params = page.get_by_test_id("selected-params")
-    expect(params).to_contain_text("inputs")  # keys, not the whole document
-    assert len(params.inner_text()) < 400
+    expect(params).to_contain_text("fis")  # the parameter is listed
+    field = page.locator("textarea[data-param='fis']")
+    expect(field).to_have_count(1)
+    document = json.loads(field.input_value())
+    assert len(document["rules"]) == 25
+    assert set(document["inputs"]) == {"deslocamento", "velocidade"}
 
 
 # ----- other diagrams ----------------------------------------------------------
