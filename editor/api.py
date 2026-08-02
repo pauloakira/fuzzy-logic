@@ -28,7 +28,8 @@ from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from fuzzy.fis import FISValidationError
@@ -47,7 +48,16 @@ MAX_POINTS = 4000
 """Decimation target. A 40 s run at dt=5 ms is 8001 samples per signal, which is
 megabytes of JSON for a plot that cannot resolve it."""
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 app = FastAPI(title="fuzzy-logic block editor", version="0.1.0")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+def index() -> FileResponse:
+    """The editor page. Plain ES modules — nothing is built or bundled."""
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 # ----- request models ---------------------------------------------------------

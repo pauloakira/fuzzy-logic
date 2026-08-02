@@ -22,13 +22,16 @@ dev = [
   "fastapi>=0.110",
   "uvicorn>=0.29",
   "httpx2>=2.9",  # required by starlette's TestClient (it deprecated httpx)
+  "pytest-playwright>=0.5",  # browser end-to-end tests; needs `playwright install`
 ]
 
 [tool.setuptools]
 packages = ["fuzzy", "editor"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# `tests/e2e` is excluded by default: it needs a downloaded browser. CI runs it
+# in a dedicated job, and `pytest tests/e2e` runs it locally on demand.
+testpaths = ["tests/unit", "tests/integration", "tests/api"]
 # starlette's TestClient warns about httpx on import; it is not our warning.
 filterwarnings = ["error::UserWarning"]
 

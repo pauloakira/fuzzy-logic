@@ -1,6 +1,7 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — phases 1-6 and 7a-7b implemented, 168 tests green, CI on 3.11/3.12/3.13
+**Status:** accepted — phases 1-6 and 7a-7b implemented; 168 tests plus 8 browser
+end-to-end tests, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
 new experiment to copy a simulation loop.
@@ -443,9 +444,10 @@ mistakes a hand-edited controller most often makes.
 Node positions belong in the spec but must be ignored by the simulator and preserved across
 round-trips. `to_mermaid()` (§6) stays useful as the headless renderer for reports.
 
-### 11.6 Stack — deliberately deferred
+### 11.6 Stack — decided
 
-To be decided after phase 2, when the spec exists and the choice is reversible:
+**Decided: FastAPI backend, hand-rolled front end with no JavaScript toolchain.**
+The options weighed were:
 
 - **Local web app** (FastAPI/Flask + a JS flow canvas). Best canvas ergonomics; adds a
   JS toolchain.
@@ -508,17 +510,37 @@ specific to this project. 7f is the part that only exists because phase 4 made m
 functions and rule bases into data, and it is the one that would actually change how the
 fuzzy research gets done.
 
-### 13.3 Canvas technology — recommendation, decided at 7c
+### 13.3 Canvas technology — decided
 
-A flow-canvas library (React Flow and similar) means npm, a bundler, and `node_modules` in
-a research repo that currently has a five-line setup. For roughly ten block types and
-straight-line wires, hand-rolled SVG with vanilla ES modules is very achievable and keeps
-the repo installable with `pip install -e .` alone, offline, with nothing to build.
+**Plain ES modules and hand-rolled SVG. No npm, no bundler, no `node_modules`.** The repo
+stays installable with `pip install -e .` alone, works offline, and has nothing to build.
+A flow-canvas library would buy drag-and-drop mechanics at the cost of a whole toolchain in
+a research repo whose setup is five lines.
 
-Recommendation: **hand-rolled SVG, no JS toolchain.** The decision is not needed until 7c,
-and 7a/7b are unaffected by it either way, so it can be revisited with real code in hand.
+The choice is contained: every capability the front end has is a documented HTTP call
+(§13.2), so replacing the canvas later would touch `editor/static/` and nothing else.
 
-### 13.4 What does not change
+### 13.4 How CI covers the front end
+
+A UI outside CI is a UI that rots. Three gates, none of which require a JS toolchain:
+
+| Gate | Mechanism | Cost |
+| --- | --- | --- |
+| API behaviour | `TestClient`, in the existing matrix job | none |
+| JS syntax | `node --check` — preinstalled on the runner, zero packages | none |
+| Real browser | Playwright (a *Python* dev dependency) in a separate `ui` job | ~1 job, browser cached |
+
+Playwright is deliberately not a contradiction of the no-toolchain rule: it installs
+through pip and downloads a browser binary in CI. Nothing is added to the repo, and the
+application still has no build step.
+
+`tests/e2e/` runs a real uvicorn process and drives the real page. It is excluded from the
+default `pytest` run — it needs a downloaded browser — and CI runs it in its own job on one
+Python version. Tests key off `data-testid` hooks so restyling does not break them, and an
+autouse fixture fails any test whose page logged a console error, because a UI that renders
+while throwing underneath is not passing.
+
+### 13.5 What does not change
 
 The spec file stays the source of truth (§2). The canvas is one of two equal authors — a
 diagram must remain hand-editable, diffable, and loopable for sweeps. Any editor feature

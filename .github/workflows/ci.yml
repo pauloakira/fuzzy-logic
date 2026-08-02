@@ -40,5 +40,51 @@ jobs:
       - name: Types
         run: mypy
 
+      - name: JavaScript syntax
+        # Node is preinstalled on the runner and `--check` needs no packages —
+        # a syntax gate for the front end without introducing a JS toolchain.
+        run: for f in editor/static/*.js; do node --check "$f"; done
+
       - name: Tests
         run: pytest -q
+
+  ui:
+    name: browser end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev,editor]"
+
+      - name: Cache browser
+        id: browser-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium
+
+      - name: Install browser
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: playwright install --with-deps chromium
+
+      - name: Install browser deps
+        if: steps.browser-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
+
+      - name: End-to-end tests
+        run: pytest tests/e2e -q
+
+      - name: Upload failure artefacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          if-no-files-found: ignore

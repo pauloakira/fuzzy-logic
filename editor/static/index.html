@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fuzzy-logic block editor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Block editor</h1>
+    <span id="status" data-testid="status">loading…</span>
+  </header>
+
+  <main>
+    <section id="palette-panel">
+      <h2>Palette</h2>
+      <ul id="palette" data-testid="palette"></ul>
+    </section>
+
+    <section id="diagram-panel">
+      <h2>Diagrams</h2>
+      <ul id="diagrams" data-testid="diagrams"></ul>
+      <div id="summary" data-testid="summary" hidden>
+        <h3 id="summary-name"></h3>
+        <p><span data-testid="block-count"></span> blocks,
+           <span data-testid="connection-count"></span> connections,
+           <span data-testid="state-count"></span> states</p>
+        <ul id="advice" data-testid="advice"></ul>
+        <p id="validity" data-testid="validity"></p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

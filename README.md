@@ -75,7 +75,16 @@ mypy
 ```
 
 These three commands are exactly what CI runs, on Python 3.11 / 3.12 / 3.13
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), alongside `node --check`
+on the editor's JavaScript.
+
+Browser end-to-end tests live in `tests/e2e/` and are excluded from the default run
+because they need a downloaded browser. CI runs them in a separate job:
+
+```bash
+playwright install chromium
+pytest tests/e2e -q
+```
 
 `tests/unit/` covers the library in pieces; `tests/integration/` pins the numbers
 published in the exercise reports, so a refactor that quietly moves a documented

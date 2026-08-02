@@ -1,0 +1,89 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --line: #d8d8d8;
+  --accent: #1f77b4;
+  --bad: #d62728;
+  --good: #2ca02c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --fg: #e8e8e8;
+    --muted: #9aa0a6;
+    --line: #33373d;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { font-size: 1.1rem; margin: 0; }
+h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
+     color: var(--muted); margin: 0 0 0.5rem; }
+h3 { font-size: 1rem; margin: 0 0 0.25rem; }
+
+#status { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) 1fr;
+  gap: 1.5rem;
+  padding: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 40rem) {
+  main { grid-template-columns: 1fr; }
+}
+
+ul { list-style: none; margin: 0; padding: 0; }
+
+#palette li {
+  overflow-wrap: anywhere;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+#palette .params { color: var(--muted); }
+#palette .required { color: var(--accent); display: block; font-size: 0.85em; }
+
+#diagrams button {
+  /* Spec paths are long and have no spaces to break on; without this they
+     push the page into horizontal overflow on a narrow viewport. */
+  overflow-wrap: anywhere;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  margin-bottom: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  width: 100%;
+}
+
+#diagrams button:hover { border-color: var(--accent); }
+
+#summary { margin-top: 1.25rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+#advice li { color: var(--muted); }
+
+[data-testid="validity"][data-ok="true"] { color: var(--good); }
+[data-testid="validity"][data-ok="false"] { color: var(--bad); }
