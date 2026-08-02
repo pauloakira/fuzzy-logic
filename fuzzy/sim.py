@@ -16,7 +16,7 @@ multi-rate sample-time propagation.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,11 +29,36 @@ PortSpec = "Block | tuple[Block, str]"
 
 
 class AlgebraicLoopError(RuntimeError):
-    """A cycle of direct-feedthrough blocks. Insert a sampled block to break it."""
+    """A cycle of direct-feedthrough blocks. Insert a sampled block to break it.
+
+    `.blocks` names every block in the cycle, so an editor can highlight the whole
+    loop rather than making the user read it out of the message.
+    """
+
+    def __init__(self, message: str, blocks: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.blocks = list(blocks)
 
 
 class WiringError(ValueError):
-    """The diagram is not a valid, fully connected system."""
+    """The diagram is not a valid, fully connected system.
+
+    `.block`, `.port`, and `.related` carry structured references to what is
+    wrong, so a canvas can highlight the offending node or wire instead of only
+    printing a sentence. Any of them may be `None` when not applicable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        block: str | None = None,
+        port: str | None = None,
+        related: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.block = block
+        self.port = port
+        self.related = related
 
 
 # ----- Log -------------------------------------------------------------------
@@ -84,7 +109,7 @@ class Diagram:
     def add(self, *blocks: Block) -> Block | tuple[Block, ...]:
         for b in blocks:
             if any(b.name == other.name for other in self._blocks):
-                raise WiringError(f"duplicate block name {b.name!r}")
+                raise WiringError(f"duplicate block name {b.name!r}", block=b.name)
             self._blocks.append(b)
         self._order = None
         return blocks[0] if len(blocks) == 1 else blocks
@@ -101,7 +126,12 @@ class Diagram:
             if b not in self._blocks:
                 self.add(b)
         if (db, dp) in self._conns:
-            raise WiringError(f"input {db.name}.{dp} is already connected")
+            raise WiringError(
+                f"input {db.name}.{dp} is already connected",
+                block=db.name,
+                port=dp,
+                related=self._conns[(db, dp)][0].name,
+            )
         self._conns[(db, dp)] = (sb, sp)
         self._order = None
 
@@ -110,12 +140,17 @@ class Diagram:
             ports: tuple[str, ...] = getattr(spec, side)
             if len(ports) != 1:
                 raise WiringError(
-                    f"{spec.name!r} has {len(ports)} {side}; name one explicitly"
+                    f"{spec.name!r} has {len(ports)} {side}; name one explicitly",
+                    block=spec.name,
                 )
             return spec, ports[0]
         block, port = spec
         if port not in getattr(block, side):
-            raise WiringError(f"{block.name!r} has no {side[:-1]} port {port!r}")
+            raise WiringError(
+                f"{block.name!r} has no {side[:-1]} port {port!r}",
+                block=block.name,
+                port=port,
+            )
         return block, port
 
     # -- validation and scheduling --
@@ -127,7 +162,9 @@ class Diagram:
         for b in self._blocks:
             for p in b.inputs:
                 if (b, p) not in self._conns:
-                    raise WiringError(f"input {b.name}.{p} is not connected")
+                    raise WiringError(
+                        f"input {b.name}.{p} is not connected", block=b.name, port=p
+                    )
 
         # A source->dest edge constrains scheduling only when the destination
         # actually reads its inputs to produce its output.
@@ -141,10 +178,12 @@ class Diagram:
         while remaining:
             ready = [b for b, ps in remaining.items() if not (ps & remaining.keys())]
             if not ready:
+                cycle = sorted(b.name for b in remaining)
                 raise AlgebraicLoopError(
                     "direct-feedthrough cycle among: "
-                    + ", ".join(sorted(b.name for b in remaining))
-                    + " — insert a sampled block (FISBlock/PIDBlock) to break it"
+                    + ", ".join(cycle)
+                    + " — insert a sampled block (FISBlock/PIDBlock) to break it",
+                    blocks=cycle,
                 )
             ready.sort(key=lambda b: self._blocks.index(b))
             order.extend(ready)
@@ -182,7 +221,9 @@ class Diagram:
                     raise WiringError(
                         f"sampled block {d.name!r} depends on sampled block "
                         f"{s.name!r} through algebraic blocks only, so it would "
-                        f"read a stale value; multi-rate chains are out of scope"
+                        f"read a stale value; multi-rate chains are out of scope",
+                        block=d.name,
+                        related=s.name,
                     )
                 if s.feedthrough:
                     stack.extend(self._conns[(s, p)][0] for p in s.inputs)

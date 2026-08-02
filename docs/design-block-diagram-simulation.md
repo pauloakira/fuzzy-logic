@@ -238,7 +238,9 @@ than being ported twice.
    local `MotorPlant` block, output relabelled V/s, §6 diagonal-equilibrium claim and §9/§10
    convergence claim corrected, Euler -> RK4. Also fixed a false positive in
    `_check_discrete_chain` it exposed.
-7. **The editor itself.** Stack decision deferred to §11.6.
+7. **The editor itself** — broken into six independently shippable steps in §13,
+   because it is larger than everything before it combined. Stack: FastAPI backend,
+   browser canvas (§11.6).
 
 ## 10. Validation
 
@@ -460,3 +462,64 @@ The honest risk is scope creep: a simulation framework is more fun to build than
 `rules.py` / `anfis.py` are still empty docstrings. Mitigations: the non-goals in §2, the
 no-speculative-blocks rule, and the phase-1 exit criterion being *tests green*, not *feature
 complete*.
+
+---
+
+## 13. Phase 7 — the editor, in six steps
+
+Phase 7 is bigger than phases 1–6 combined, so it is decomposed into steps that each
+ship something working and testable on their own. The ordering is deliberate: everything
+headless and CI-testable comes first, and the browser is not required until step 3.
+
+### 13.1 Where the code lives
+
+`fuzzy/` is the library and stays free of web concerns — `simulate()` must never import a
+web framework. The editor gets its own top level:
+
+```
+editor/
+  api.py            FastAPI app: palette, load/save, validate, simulate
+  static/           index.html, canvas.js, panel.js, style.css  (no build step)
+tests/api/          headless tests against the API via TestClient
+```
+
+This is a new top-level directory, which the charter says to flag rather than improvise.
+FastAPI and uvicorn go in an optional `[editor]` extra plus `[dev]`, so the core install
+stays NumPy + matplotlib and CI can still exercise the API.
+
+### 13.2 The six steps
+
+| Step | Deliverable | Exit criterion | Browser? |
+| --- | --- | --- | --- |
+| **7a** | Structured wiring errors (§11.4's diagram half) | `WiringError`/`AlgebraicLoopError` carry block and port references; tests assert them | no |
+| **7b** | Read-only HTTP API | `GET /palette`, `GET /diagram`, `POST /validate`, `POST /simulate` — all tested headlessly with `TestClient` | no |
+| **7c** | Canvas renders a diagram | exercise 2's `diagram.json` draws with correct node positions and wires | yes |
+| **7d** | Interactive editing | drag a node, edit a parameter, add/remove a block or wire, save — and the file on disk changes | yes |
+| **7e** | Run and plot in the browser | click Run, see the response curve for the edited diagram | yes |
+| **7f** | Fuzzy controller editor | drag MF breakpoints, edit the rule grid, watch the control surface change | yes |
+
+**7a and 7b are the ones worth doing first.** Together they make the entire backend
+exercisable in CI with no browser at all, which means the interesting half of the editor
+is under the same test discipline as the rest of the repo. 7c–7f are where a browser
+becomes necessary and testing gets softer.
+
+**7f is the payoff.** Steps 7c–7e give a generic block editor, which is useful but not
+specific to this project. 7f is the part that only exists because phase 4 made membership
+functions and rule bases into data, and it is the one that would actually change how the
+fuzzy research gets done.
+
+### 13.3 Canvas technology — recommendation, decided at 7c
+
+A flow-canvas library (React Flow and similar) means npm, a bundler, and `node_modules` in
+a research repo that currently has a five-line setup. For roughly ten block types and
+straight-line wires, hand-rolled SVG with vanilla ES modules is very achievable and keeps
+the repo installable with `pip install -e .` alone, offline, with nothing to build.
+
+Recommendation: **hand-rolled SVG, no JS toolchain.** The decision is not needed until 7c,
+and 7a/7b are unaffected by it either way, so it can be revisited with real code in hand.
+
+### 13.4 What does not change
+
+The spec file stays the source of truth (§2). The canvas is one of two equal authors — a
+diagram must remain hand-editable, diffable, and loopable for sweeps. Any editor feature
+that cannot be expressed in the spec file is out of scope by construction.

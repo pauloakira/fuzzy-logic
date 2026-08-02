@@ -85,13 +85,83 @@ def test_algebraic_loop_raises_and_names_blocks():
     with pytest.raises(AlgebraicLoopError) as exc:
         d.evaluate(0.0, np.zeros(0))
     assert "a" in str(exc.value) and "b" in str(exc.value)
+    # structured, so a canvas can highlight the whole loop
+    assert exc.value.blocks == ["a", "b"]
 
 
-def test_unconnected_input_raises():
+# ----- structured error references (what the canvas highlights) ----------------
+
+
+def test_unconnected_input_names_block_and_port():
     d = Diagram()
     d.add(Gain(1.0, name="g"))
-    with pytest.raises(WiringError, match="not connected"):
+    with pytest.raises(WiringError, match="not connected") as exc:
         d.evaluate(0.0, np.zeros(0))
+    assert (exc.value.block, exc.value.port) == ("g", "u")
+
+
+def test_double_connection_names_the_existing_source():
+    """The canvas needs to know which wire is already there, not just that one is."""
+    d = Diagram()
+    src, other = Harmonic(name="src"), Harmonic(name="other")
+    g = Gain(1.0, name="g")
+    d.connect(src, g)
+    with pytest.raises(WiringError) as exc:
+        d.connect(other, g)
+    assert (exc.value.block, exc.value.port, exc.value.related) == ("g", "u", "src")
+
+
+def test_unknown_port_names_block_and_port():
+    d = Diagram()
+    g = Gain(1.0, name="g")
+    with pytest.raises(WiringError) as exc:
+        d.connect(Harmonic(name="src"), (g, "nope"))
+    assert (exc.value.block, exc.value.port) == ("g", "nope")
+
+
+def test_ambiguous_port_names_the_block():
+    d = Diagram()
+    s = Sum(("a", "b"), name="s")
+    with pytest.raises(WiringError) as exc:
+        d.connect(Harmonic(name="src"), s)
+    assert exc.value.block == "s" and exc.value.port is None
+
+
+def test_duplicate_name_error_names_the_block():
+    d = Diagram()
+    d.add(Gain(1.0, name="g"))
+    with pytest.raises(WiringError, match="duplicate") as exc:
+        d.add(Gain(2.0, name="g"))
+    assert exc.value.block == "g"
+
+
+def test_sampled_chain_error_names_both_blocks():
+    d = Diagram()
+    plant = sdof_plant(M, C, K)
+    k1 = StateFeedback([1.0, 0.0], name="k1")
+    k2 = StateFeedback([1.0], name="k2")
+    d.connect(plant, k1)
+    d.connect(k1, k2)
+    d.connect(k2, plant)
+    with pytest.raises(WiringError, match="multi-rate") as exc:
+        d.evaluate(0.0, d.initial_state())
+    assert (exc.value.block, exc.value.related) == ("k2", "k1")
+
+
+def test_feedthrough_plant_in_a_sampled_loop_is_allowed():
+    """D != 0 inside a sampled loop is ordinary ZOH structure, not a multi-rate chain.
+
+    The tracer used to walk back through the plant and report a false cycle.
+    """
+    d = Diagram()
+    plant = StateSpacePlant(
+        [[0.0, 1.0], [-100.0, -0.4]], [[0.0], [1.0]],
+        C=[[1.0, 0.0]], D=[[0.1]], name="plant",
+    )
+    ctrl = StateFeedback([1.0], name="k")
+    d.connect(plant, ctrl)
+    d.connect(ctrl, plant)
+    d.evaluate(0.0, d.initial_state())  # must not raise
 
 
 def test_plant_in_loop_is_not_an_algebraic_loop():
@@ -102,25 +172,6 @@ def test_plant_in_loop_is_not_an_algebraic_loop():
     d.connect(plant, ctrl)
     d.connect(ctrl, plant)
     d.evaluate(0.0, d.initial_state())  # must not raise
-
-
-def test_sampled_block_may_not_feed_sampled_block():
-    d = Diagram()
-    plant = sdof_plant(M, C, K)
-    k1 = StateFeedback([1.0, 0.0], name="k1")
-    k2 = StateFeedback([1.0], name="k2")
-    d.connect(plant, k1)
-    d.connect(k1, k2)
-    d.connect(k2, plant)
-    with pytest.raises(WiringError, match="multi-rate"):
-        d.evaluate(0.0, d.initial_state())
-
-
-def test_duplicate_block_name_raises():
-    d = Diagram()
-    d.add(Gain(1.0, name="g"))
-    with pytest.raises(WiringError, match="duplicate"):
-        d.add(Gain(2.0, name="g"))
 
 
 # ----- plant physics ----------------------------------------------------------
