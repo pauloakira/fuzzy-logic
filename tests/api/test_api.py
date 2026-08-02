@@ -37,17 +37,24 @@ def test_palette_lists_every_registered_block():
 
 def test_palette_carries_enough_to_render_a_property_panel():
     harmonic = client.get("/api/palette").json()["blocks"]["Harmonic"]
-    by_name = {p["name"]: p for p in harmonic}
+    by_name = {p["name"]: p for p in harmonic["params"]}
     assert set(by_name) == {"amplitude", "omega", "phase"}
     assert by_name["omega"]["default"] == 1.0
     assert by_name["omega"]["required"] is False
+
+
+def test_palette_carries_class_level_ports_for_drawing():
+    blocks = client.get("/api/palette").json()["blocks"]
+    assert blocks["Saturation"]["inputs"] == ["u"]
+    assert blocks["Saturation"]["outputs"] == ["y"]
+    assert blocks["Harmonic"]["inputs"] == []  # a source has none
 
 
 def test_palette_is_json_safe_despite_infinite_defaults():
     """PIDBlock defaults lo/hi to +/-inf, which is not valid JSON."""
     raw = client.get("/api/palette").text
     assert "Infinity" not in raw and "NaN" not in raw
-    params = client.get("/api/palette").json()["blocks"]["PIDBlock"]
+    params = client.get("/api/palette").json()["blocks"]["PIDBlock"]["params"]
     pid = {p["name"]: p for p in params}
     assert pid["lo"]["default"] is None  # non-finite defaults are nulled
 
@@ -75,6 +82,28 @@ def test_get_diagram_preserves_layout_for_the_canvas():
     blocks = client.get("/api/diagram", params={"path": path}).json()["spec"]["blocks"]
     plant = next(b for b in blocks if b["name"] == "plant")
     assert plant["layout"] == {"x": 360.0, "y": 120.0}
+
+
+def test_diagram_resolves_ports_per_block_instance():
+    """Sum's ports come from its `ports` param and FISBlock's from the FIS, so
+    neither can be read off the class — only the built diagram knows."""
+    path = "exercises/exercicio2_sdof_vibration_control/diagram.json"
+    ports = client.get("/api/diagram", params={"path": path}).json()["ports"]
+    assert ports["total"]["inputs"] == ["ext", "ctrl"]
+    assert ports["controller"]["inputs"] == ["deslocamento", "velocidade"]
+    assert ports["controller"]["outputs"] == ["u"]
+    assert ports["force"]["inputs"] == []
+
+
+def test_validate_also_returns_ports():
+    """After an edit the canvas needs ports again without reloading the file."""
+    import json as _json
+
+    spec = _json.loads(
+        (EXERCISE / "diagram.json").read_text()
+    )
+    body = client.post("/api/validate", json={"spec": spec}).json()
+    assert body["ports"]["controller"]["inputs"] == ["deslocamento", "velocidade"]
 
 
 def test_path_traversal_is_refused():

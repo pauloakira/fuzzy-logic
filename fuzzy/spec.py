@@ -45,6 +45,7 @@ from fuzzy.blocks import (
     FISBlock,
     Gain,
     Harmonic,
+    MotorPlant,
     Observer,
     PIDBlock,
     Saturation,
@@ -101,6 +102,7 @@ for _t in (
     PIDBlock,
     StateFeedback,
     Observer,
+    MotorPlant,
 ):
     register(_t)
 

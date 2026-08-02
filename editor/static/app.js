@@ -1,16 +1,24 @@
 // Block editor front end.
 //
 // Plain ES modules, no build step: the repo stays installable with
-// `pip install -e .` alone, with nothing to compile and no node_modules. The
-// canvas (step 7c) renders into this same page.
+// `pip install -e .` alone, with nothing to compile and no node_modules.
 //
 // Every element the end-to-end tests assert on carries a `data-testid`, so the
 // tests key off stable hooks rather than markup structure or CSS classes.
 
+import { highlightProblems, renderDiagram } from "/static/canvas.js";
+
 const api = {
   async get(path) {
     const r = await fetch(path);
-    if (!r.ok) throw new Error(`${path} -> ${r.status}`);
+    if (!r.ok) {
+      // The API answers failures with a structured detail object; surface what
+      // it says rather than a bare status code.
+      const detail = await r.json().catch(() => ({}));
+      const err = new Error(detail?.detail?.error || `${path} -> ${r.status}`);
+      err.block = detail?.detail?.block;
+      throw err;
+    }
     return r.json();
   },
   async post(path, body) {
@@ -30,20 +38,32 @@ function el(tag, attrs = {}, text = "") {
   return node;
 }
 
+function set(testid, value) {
+  document.querySelector(`[data-testid="${testid}"]`).textContent = String(value);
+}
+
+let palette = {};
+
 async function renderPalette() {
   const { blocks } = await api.get("/api/palette");
+  palette = blocks;
+  window.__palette = blocks;  // handle for the end-to-end tests
   const list = document.getElementById("palette");
   list.replaceChildren();
-  for (const [name, params] of Object.entries(blocks)) {
-    const required = params.filter((p) => p.required).map((p) => p.name);
+  for (const [name, meta] of Object.entries(blocks)) {
+    const required = meta.params.filter((p) => p.required).map((p) => p.name);
     const item = el("li", { "data-block-type": name });
     item.appendChild(el("strong", {}, name));
     item.appendChild(
       el("span", { class: "params" },
-        params.length ? ` ${params.map((p) => p.name).join(", ")}` : " (no parameters)")
+        meta.params.length
+          ? ` ${meta.params.map((p) => p.name).join(", ")}`
+          : " (no parameters)")
     );
     if (required.length) {
-      item.appendChild(el("span", { class: "required" }, ` required: ${required.join(", ")}`));
+      item.appendChild(
+        el("span", { class: "required" }, `required: ${required.join(", ")}`)
+      );
     }
     list.appendChild(item);
   }
@@ -62,12 +82,57 @@ async function renderDiagramList() {
   return diagrams;
 }
 
+function showSelection(block) {
+  document.getElementById("selection").hidden = false;
+  set("selected-name", block.name);
+  set("selected-type", block.type);
+  const dl = document.querySelector('[data-testid="selected-params"]');
+  dl.replaceChildren();
+  for (const [key, value] of Object.entries(block.params || {})) {
+    dl.appendChild(el("dt", {}, key));
+    // A FIS or a matrix is not a one-line value; summarise rather than dump it.
+    const text =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? `{${Object.keys(value).join(", ")}}`
+        : JSON.stringify(value);
+    dl.appendChild(el("dd", {}, text.length > 60 ? `${text.slice(0, 57)}…` : text));
+  }
+}
+
 async function openDiagram(path) {
   const status = document.getElementById("status");
-  status.textContent = `loading ${path}…`;
+  status.textContent = `loading ${path}\u2026`;
+  try {
+    await loadDiagram(path);
+    status.textContent = "ready";
+    status.dataset.ready = "true";
+  } catch (err) {
+    // A spec can name a block type this build does not have, or be malformed.
+    // Say so, name the block if the API named one, and leave no stale drawing.
+    document.getElementById("canvas").replaceChildren();
+    document.getElementById("canvas-empty").hidden = false;
+    document.getElementById("canvas-empty").textContent =
+      err.block ? `${err.message} (block: ${err.block})` : err.message;
+    document.getElementById("summary").hidden = true;
+    document.getElementById("selection").hidden = true;
+    status.textContent = `could not open ${path}`;
+    status.dataset.ready = "error";
+  }
+}
 
-  const { spec } = await api.get(`/api/diagram?path=${encodeURIComponent(path)}`);
+async function loadDiagram(path) {
+  const { spec, ports } = await api.get(
+    `/api/diagram?path=${encodeURIComponent(path)}`
+  );
   const report = await api.post("/api/validate", { spec });
+
+  // Ports come resolved per block instance from the API — Sum's depend on its
+  // `ports` parameter and FISBlock's on the FIS, so the class cannot supply them.
+  const canvas = document.getElementById("canvas");
+  const drawn = renderDiagram(canvas, spec, ports, showSelection);
+  document.getElementById("canvas-empty").hidden = true;
+  canvas.dataset.nodes = String(drawn.nodes);
+  canvas.dataset.wires = String(drawn.wires);
 
   document.getElementById("summary-name").textContent = spec.name || path;
   set("block-count", spec.blocks.length);
@@ -83,21 +148,18 @@ async function openDiagram(path) {
     validity.textContent = "valid";
     validity.dataset.ok = "true";
   } else {
-    // Problems carry structured block/port references, so once the canvas
-    // exists this is where a node gets highlighted rather than described.
     const first = report.problems[0] || {};
     validity.textContent = `invalid: ${first.error || "unknown problem"}`;
     validity.dataset.ok = "false";
     validity.dataset.block = first.block || "";
   }
+  // Structured problem references exist precisely so the canvas can point at
+  // the offending node rather than describe it.
+  highlightProblems(canvas, report.problems || []);
 
   document.getElementById("summary").hidden = false;
-  status.textContent = "ready";
-  window.__lastSpec = spec; // handle for the end-to-end tests
-}
-
-function set(testid, value) {
-  document.querySelector(`[data-testid="${testid}"]`).textContent = String(value);
+  document.getElementById("selection").hidden = true;
+  window.__lastSpec = spec;
 }
 
 async function main() {

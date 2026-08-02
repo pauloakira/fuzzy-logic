@@ -91,6 +91,20 @@ def test_controller_validates_and_covers_its_rule_base():
     assert spec.rules.coverage(spec.term_names()) == 1.0
 
 
+def test_spec_records_the_physical_limits_from_the_problem_statement():
+    """omega in [0, 1000] rpm and V in [0, 100] V are part of the exercise.
+
+    MotorPlant lives in the library and defaults to unbounded, so relying on its
+    defaults would silently drop these — which is exactly what happened once.
+    """
+    import json
+
+    spec = json.loads((EXERCISE / "diagram.json").read_text())
+    plant = next(b for b in spec["blocks"] if b["name"] == "plant")
+    assert plant["params"]["omega_bounds"] == [0.0, MC.OMEGA_MAX]
+    assert plant["params"]["v_bounds"] == [0.0, MC.V_MAX]
+
+
 def test_diagram_json_is_self_contained():
     from fuzzy.spec import load
 

@@ -63,14 +63,13 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.typing import NDArray
 
-from fuzzy.blocks import Block, FISBlock, Inputs, Saturation, Select
+from fuzzy.blocks import FISBlock, MotorPlant, Saturation, Select
 from fuzzy.fis import FISSpec, MamdaniFIS
 from fuzzy.membership import Variable
 from fuzzy.rules import RuleBase
 from fuzzy.sim import Diagram, Log, simulate
-from fuzzy.spec import register, save
+from fuzzy.spec import save
 
 # ----- Plant parameters -----------------------------------------------------
 
@@ -87,80 +86,6 @@ T_MAX = 800.0  # s — long enough to see convergence toward (500, 50)
 
 
 # ----- The plant, as a block -------------------------------------------------
-
-
-class MotorPlant(Block):
-    """DC motor plant, state `[omega, V]`.
-
-        omega_dot = clip(K * V - omega, -OMEGA_RATE_MAX, +OMEGA_RATE_MAX)
-        V_dot     = u                              (the controller's V/s command)
-
-    with `omega` clamped to `[0, OMEGA_MAX]` and `V` clamped to `[0, V_MAX]`.
-
-    Both the rate limiter on `omega_dot` and the hard state clamps make this
-    plant non-linear, so it is **not** an LTI system: it exposes no
-    `eigenvalues()`, and therefore `Diagram.stability_limit()` has nothing to
-    check it against — there is no automatic RK4 stability guard for this
-    block, unlike `StateSpacePlant`. The state clamps are enforced as reflecting
-    boundaries on the derivative (zeroed once a state is at its bound and the
-    unclipped derivative would push it further out) rather than by clipping the
-    integrated state after the fact, since RK4 has no discrete "after a step"
-    point at which to clip.
-
-    `feedthrough` is `False`: `output()` reads only the state `x`, never `u` —
-    unlike `StateSpacePlant` with a non-zero `D`, this plant's output has no
-    algebraic dependence on its input.
-    """
-
-    inputs = ("u",)
-    outputs = ("y",)
-    n_states = 2
-    feedthrough = False
-
-    def __init__(
-        self,
-        k: float = K,
-        omega_rate_max: float = OMEGA_RATE_MAX,
-        omega_bounds: tuple[float, float] = (0.0, OMEGA_MAX),
-        v_bounds: tuple[float, float] = (0.0, V_MAX),
-        omega0: float = 0.0,
-        v0: float = 0.0,
-        name: str | None = None,
-    ) -> None:
-        super().__init__(name)
-        self.k = float(k)
-        self.omega_rate_max = float(omega_rate_max)
-        self.omega_bounds = (float(omega_bounds[0]), float(omega_bounds[1]))
-        self.v_bounds = (float(v_bounds[0]), float(v_bounds[1]))
-        self.omega0 = float(omega0)
-        self.v0 = float(v0)
-
-    def initial_state(self) -> NDArray[np.float64]:
-        return np.array([self.omega0, self.v0])
-
-    def derivative(
-        self, t: float, x: NDArray[np.float64], u: Inputs
-    ) -> NDArray[np.float64]:
-        omega, V = x
-        lo_om, hi_om = self.omega_bounds
-        lo_v, hi_v = self.v_bounds
-        omega_dot = float(
-            np.clip(self.k * V - omega, -self.omega_rate_max, self.omega_rate_max)
-        )
-        v_dot = float(u["u"])
-        if (omega <= lo_om and omega_dot < 0.0) or (omega >= hi_om and omega_dot > 0.0):
-            omega_dot = 0.0
-        if (V <= lo_v and v_dot < 0.0) or (V >= hi_v and v_dot > 0.0):
-            v_dot = 0.0
-        return np.array([omega_dot, v_dot])
-
-    def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, object]:
-        omega = float(np.clip(x[0], *self.omega_bounds))
-        V = float(np.clip(x[1], *self.v_bounds))
-        return {"y": np.array([omega, V])}
-
-
-register(MotorPlant)
 
 
 # ----- Linguistic variables ---------------------------------------------------
@@ -236,8 +161,17 @@ def build_diagram(
 ) -> Diagram:
     """Assemble the closed loop: plant, phase-plane selects, controller, actuator."""
     d = Diagram(name=name)
+    # Every physical limit is stated explicitly rather than left to the block's
+    # defaults: omega in [0, 1000] rpm and V in [0, 100] V are part of the
+    # problem statement, and the spec file must record them.
     plant = MotorPlant(
-        k=K, omega_rate_max=OMEGA_RATE_MAX, omega0=x0, v0=v0, name="plant"
+        k=K,
+        omega_rate_max=OMEGA_RATE_MAX,
+        omega_bounds=(0.0, OMEGA_MAX),
+        v_bounds=(0.0, V_MAX),
+        omega0=x0,
+        v0=v0,
+        name="plant",
     )
     vel = Select(0, name="vel")
     alim = Select(1, name="alim")

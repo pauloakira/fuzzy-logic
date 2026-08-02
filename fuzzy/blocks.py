@@ -263,6 +263,83 @@ def sdof_plant(
     )
 
 
+class MotorPlant(Block):
+    """Rate-limited first-order plant driven through an integrator.
+
+        omega_dot = clip(k * V - omega, -omega_rate_max, +omega_rate_max)
+        V_dot     = u                        (the controller commands dV/dt)
+
+    with each state clamped to its own bounds. Exercise 1's DC motor is the
+    motivating case (`k = 10` rpm/V, a 1 rpm/s slew limit, 0-1000 rpm, 0-100 V),
+    but nothing here is motor-specific.
+
+    Lives in the library rather than in the exercise because a spec file naming a
+    block type is only loadable if that type is registered — an exercise-local
+    block makes its own diagram unopenable by the editor.
+
+    Both the rate limiter on `omega_dot` and the hard state clamps make this
+    plant non-linear, so it is **not** an LTI system: it exposes no
+    `eigenvalues()`, and therefore `Diagram.stability_limit()` has nothing to
+    check it against — there is no automatic RK4 stability guard for this
+    block, unlike `StateSpacePlant`. The state clamps are enforced as reflecting
+    boundaries on the derivative (zeroed once a state is at its bound and the
+    unclipped derivative would push it further out) rather than by clipping the
+    integrated state after the fact, since RK4 has no discrete "after a step"
+    point at which to clip.
+
+    `feedthrough` is `False`: `output()` reads only the state `x`, never `u` —
+    unlike `StateSpacePlant` with a non-zero `D`, this plant's output has no
+    algebraic dependence on its input.
+    """
+
+    inputs = ("u",)
+    outputs = ("y",)
+    n_states = 2
+    feedthrough = False
+
+    def __init__(
+        self,
+        k: float = 1.0,
+        omega_rate_max: float = float("inf"),
+        omega_bounds: tuple[float, float] = (-np.inf, np.inf),
+        v_bounds: tuple[float, float] = (-np.inf, np.inf),
+        omega0: float = 0.0,
+        v0: float = 0.0,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(name)
+        self.k = float(k)
+        self.omega_rate_max = float(omega_rate_max)
+        self.omega_bounds = (float(omega_bounds[0]), float(omega_bounds[1]))
+        self.v_bounds = (float(v_bounds[0]), float(v_bounds[1]))
+        self.omega0 = float(omega0)
+        self.v0 = float(v0)
+
+    def initial_state(self) -> NDArray[np.float64]:
+        return np.array([self.omega0, self.v0])
+
+    def derivative(
+        self, t: float, x: NDArray[np.float64], u: Inputs
+    ) -> NDArray[np.float64]:
+        omega, V = x
+        lo_om, hi_om = self.omega_bounds
+        lo_v, hi_v = self.v_bounds
+        omega_dot = float(
+            np.clip(self.k * V - omega, -self.omega_rate_max, self.omega_rate_max)
+        )
+        v_dot = float(u["u"])
+        if (omega <= lo_om and omega_dot < 0.0) or (omega >= hi_om and omega_dot > 0.0):
+            omega_dot = 0.0
+        if (V <= lo_v and v_dot < 0.0) or (V >= hi_v and v_dot > 0.0):
+            v_dot = 0.0
+        return np.array([omega_dot, v_dot])
+
+    def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, Any]:
+        omega = float(np.clip(x[0], *self.omega_bounds))
+        V = float(np.clip(x[1], *self.v_bounds))
+        return {"y": np.array([omega, V])}
+
+
 # ----- Controllers (sampled) -------------------------------------------------
 
 

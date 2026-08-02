@@ -107,6 +107,20 @@ def _problem(exc: Exception) -> dict[str, Any]:
     return out
 
 
+def _ports(diagram: Diagram) -> dict[str, dict[str, list[str]]]:
+    """Resolved port names per block.
+
+    A spec does not carry port names — they belong to the block type. But for
+    `Sum` they depend on the `ports` parameter and for `FISBlock` on the FIS's
+    input variables, so they cannot be read off the class either. Resolving them
+    from the instantiated diagram is the only way to be right for every block.
+    """
+    return {
+        b.name: {"inputs": list(b.inputs), "outputs": list(b.outputs)}
+        for b in diagram.blocks
+    }
+
+
 def _build(spec: dict[str, Any]) -> Diagram:
     try:
         return from_spec(spec)
@@ -145,9 +159,20 @@ def get_palette() -> dict[str, Any]:
             "required": p.required,
         }
 
+    from fuzzy.spec import REGISTRY
+
+    def sides(type_name: str) -> dict[str, list[str]]:
+        target = REGISTRY[type_name]
+        cls = target if isinstance(target, type) else None
+        return {
+            "inputs": list(getattr(cls, "inputs", ()) or ()),
+            "outputs": list(getattr(cls, "outputs", ()) or ()),
+        }
+
     return {
         "blocks": {
-            name: [entry(p) for p in params] for name, params in palette().items()
+            name: {"params": [entry(p) for p in params], **sides(name)}
+            for name, params in palette().items()
         }
     }
 
@@ -175,7 +200,7 @@ def get_diagram(path: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise HTTPException(422, detail={"error": f"invalid JSON: {exc}"}) from exc
     diagram = _build(raw)
-    return {"path": path, "spec": to_spec(diagram)}
+    return {"path": path, "spec": to_spec(diagram), "ports": _ports(diagram)}
 
 
 @app.post("/api/validate")
@@ -211,6 +236,7 @@ def post_validate(payload: SpecPayload) -> dict[str, Any]:
         "advice": advice,
         "n_states": diagram.n_states,
         "blocks": [b.name for b in diagram.blocks],
+        "ports": _ports(diagram),
     }
 
 

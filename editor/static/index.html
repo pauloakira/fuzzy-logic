@@ -13,22 +13,40 @@
   </header>
 
   <main>
-    <section id="palette-panel">
-      <h2>Palette</h2>
-      <ul id="palette" data-testid="palette"></ul>
-    </section>
+    <aside>
+      <section>
+        <h2>Diagrams</h2>
+        <ul id="diagrams" data-testid="diagrams"></ul>
+      </section>
 
-    <section id="diagram-panel">
-      <h2>Diagrams</h2>
-      <ul id="diagrams" data-testid="diagrams"></ul>
-      <div id="summary" data-testid="summary" hidden>
+      <section id="summary" data-testid="summary" hidden>
+        <h2>Diagram</h2>
         <h3 id="summary-name"></h3>
         <p><span data-testid="block-count"></span> blocks,
            <span data-testid="connection-count"></span> connections,
            <span data-testid="state-count"></span> states</p>
         <ul id="advice" data-testid="advice"></ul>
         <p id="validity" data-testid="validity"></p>
-      </div>
+      </section>
+
+      <section id="selection" data-testid="selection" hidden>
+        <h2>Selected</h2>
+        <h3 data-testid="selected-name"></h3>
+        <p data-testid="selected-type"></p>
+        <dl data-testid="selected-params"></dl>
+      </section>
+
+      <section>
+        <h2>Palette</h2>
+        <ul id="palette" data-testid="palette"></ul>
+      </section>
+    </aside>
+
+    <section id="canvas-panel">
+      <h2>Canvas</h2>
+      <svg id="canvas" data-testid="canvas" role="img"
+           aria-label="Block diagram"></svg>
+      <p id="canvas-empty" data-testid="canvas-empty">Choose a diagram to draw it.</p>
     </section>
   </main>
 

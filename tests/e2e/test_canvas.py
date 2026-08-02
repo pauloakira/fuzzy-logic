@@ -1,0 +1,196 @@
+"""Browser tests for the SVG canvas (step 7c).
+
+Exit criterion for 7c, from the design note: exercise 2's `diagram.json` draws
+with correct node positions and wires. These assert exactly that, plus the
+things a canvas gets silently wrong — ports resolved per block instance, sources
+and sampled blocks drawn differently, and diagrams with no layout at all.
+"""
+
+from __future__ import annotations
+
+import pytest
+from playwright.sync_api import Page, expect
+
+EX1 = "exercises/exercicio1_motor_control/diagram.json"
+EX2 = "exercises/exercicio2_sdof_vibration_control/diagram.json"
+
+
+@pytest.fixture(autouse=True)
+def _no_console_errors(page_errors):
+    yield
+    assert page_errors == [], f"page reported errors: {page_errors}"
+
+
+def open_diagram(page: Page, server: str, path: str = EX2) -> None:
+    page.goto(server)
+    expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
+    page.locator(f"[data-diagram-path='{path}']").click()
+    expect(page.get_by_test_id("summary")).to_be_visible()
+
+
+# ----- structure ---------------------------------------------------------------
+
+
+def test_canvas_draws_every_block_and_wire(page: Page, server: str):
+    open_diagram(page, server)
+    canvas = page.get_by_test_id("canvas")
+    expect(canvas).to_have_attribute("data-nodes", "7")
+    expect(canvas).to_have_attribute("data-wires", "8")
+    expect(page.get_by_test_id("nodes").locator(".node")).to_have_count(7)
+    expect(page.get_by_test_id("wires").locator(".wire")).to_have_count(8)
+
+
+def test_nodes_sit_at_their_spec_coordinates(page: Page, server: str):
+    """The whole point of `layout` surviving the round trip."""
+    open_diagram(page, server)
+    plant = page.locator(".node[data-block='plant']")
+    expect(plant).to_have_attribute("data-x", "360")
+    expect(plant).to_have_attribute("data-y", "120")
+    force = page.locator(".node[data-block='force']")
+    expect(force).to_have_attribute("data-x", "40")
+    expect(force).to_have_attribute("data-y", "40")
+
+
+def test_nodes_are_labelled_with_name_and_type(page: Page, server: str):
+    open_diagram(page, server)
+    plant = page.locator(".node[data-block='plant']")
+    expect(plant.locator(".node-name")).to_have_text("plant")
+    expect(plant.locator(".node-type")).to_have_text("StateSpacePlant")
+
+
+def test_wires_name_both_endpoints(page: Page, server: str):
+    open_diagram(page, server)
+    expect(
+        page.locator("[data-wire='force.y->total.ext']")
+    ).to_have_count(1)
+    # the feedback wire that closes the loop
+    expect(page.locator("[data-wire='actuator.y->total.ctrl']")).to_have_count(1)
+
+
+def test_shapes_distinguish_sources_and_sampled_blocks(page: Page, server: str):
+    """Matches `to_mermaid()`, so the live view and the report figure agree."""
+    open_diagram(page, server)
+    # a source has no inputs -> parallelogram
+    expect(page.locator(".node[data-block='force'] polygon")).to_have_count(1)
+    # a continuous block -> square-cornered rect
+    plant_rx = page.locator(".node[data-block='plant'] rect").get_attribute("rx")
+    assert float(plant_rx) < 10
+    # a sampled block -> fully rounded
+    ctrl_rx = page.locator(".node[data-block='controller'] rect").get_attribute("rx")
+    assert float(ctrl_rx) > 20
+
+
+def test_ports_are_drawn_from_instance_resolved_names(page: Page, server: str):
+    """FISBlock's inputs come from its FIS; no class introspection could know."""
+    open_diagram(page, server)
+    expect(page.locator("[data-port='controller.deslocamento']")).to_have_count(1)
+    expect(page.locator("[data-port='controller.velocidade']")).to_have_count(1)
+    # Sum's ports come from its `ports` parameter
+    expect(page.locator("[data-port='total.ext']")).to_have_count(1)
+    expect(page.locator("[data-port='total.ctrl']")).to_have_count(1)
+
+
+def test_viewbox_fits_the_drawn_content(page: Page, server: str):
+    open_diagram(page, server)
+    box = page.get_by_test_id("canvas").get_attribute("viewBox")
+    min_x, min_y, width, height = (float(v) for v in box.split())
+    assert min_x <= 40 and min_y <= 40  # includes the leftmost/topmost node
+    assert width > 700 and height > 200  # spans the whole diagram
+    assert width > height  # a block diagram is wide and flat
+
+
+# ----- selection ---------------------------------------------------------------
+
+
+def test_clicking_a_node_selects_it_and_shows_its_parameters(page: Page, server: str):
+    open_diagram(page, server)
+    page.locator(".node[data-block='plant']").click()
+
+    expect(page.locator(".node[data-block='plant']")).to_have_attribute(
+        "data-selected", "true"
+    )
+    expect(page.get_by_test_id("selection")).to_be_visible()
+    expect(page.get_by_test_id("selected-name")).to_have_text("plant")
+    expect(page.get_by_test_id("selected-type")).to_have_text("StateSpacePlant")
+    expect(page.get_by_test_id("selected-params")).to_contain_text("A")
+
+
+def test_only_one_node_is_selected_at_a_time(page: Page, server: str):
+    open_diagram(page, server)
+    page.locator(".node[data-block='plant']").click()
+    page.locator(".node[data-block='controller']").click()
+    expect(page.locator(".node[data-selected]")).to_have_count(1)
+    expect(page.get_by_test_id("selected-name")).to_have_text("controller")
+
+
+def test_a_node_can_be_selected_from_the_keyboard(page: Page, server: str):
+    """Nodes are focusable and Enter activates them, so the canvas is not
+    mouse-only."""
+    open_diagram(page, server)
+    node = page.locator(".node[data-block='plant']")
+    node.focus()
+    node.press("Enter")
+    expect(node).to_have_attribute("data-selected", "true")
+
+
+def test_selecting_a_fis_block_summarises_rather_than_dumps_it(page: Page, server: str):
+    """The controller's `fis` parameter is a 25-rule document, not a value."""
+    open_diagram(page, server)
+    page.locator(".node[data-block='controller']").click()
+    params = page.get_by_test_id("selected-params")
+    expect(params).to_contain_text("inputs")  # keys, not the whole document
+    assert len(params.inner_text()) < 400
+
+
+# ----- other diagrams ----------------------------------------------------------
+
+
+def test_exercise_one_also_draws(page: Page, server: str):
+    open_diagram(page, server, EX1)
+    canvas = page.get_by_test_id("canvas")
+    expect(canvas).to_have_attribute("data-nodes", "5")
+    expect(canvas).to_have_attribute("data-wires", "6")
+    expect(page.locator(".node[data-block='plant'] .node-type")).to_have_text(
+        "MotorPlant"
+    )
+
+
+def test_switching_diagrams_replaces_the_drawing(page: Page, server: str):
+    open_diagram(page, server, EX2)
+    expect(page.get_by_test_id("nodes").locator(".node")).to_have_count(7)
+    page.locator(f"[data-diagram-path='{EX1}']").click()
+    expect(page.get_by_test_id("nodes").locator(".node")).to_have_count(5)
+
+
+def test_a_diagram_without_layout_still_draws(page: Page, server: str):
+    """A spec authored by hand carries no positions; it must not collapse."""
+    open_diagram(page, server)
+    placed = page.evaluate(
+        """() => {
+          const spec = structuredClone(window.__lastSpec);
+          for (const b of spec.blocks) delete b.layout;
+          return spec;
+        }"""
+    )
+    result = page.evaluate(
+        """async (spec) => {
+          const { renderDiagram } = await import('/static/canvas.js');
+          const svg = document.getElementById('canvas');
+          const r = await fetch('/api/validate', {
+            method: 'POST',
+            headers: {'content-type': 'application/json'},
+            body: JSON.stringify({spec}),
+          }).then((x) => x.json());
+          return renderDiagram(svg, spec, r.ports);
+        }""",
+        placed,
+    )
+    assert result["nodes"] == 7 and result["wires"] == 8
+    assert result["unplaced"] == 7
+    expect(page.locator(".node[data-auto-placed]")).to_have_count(7)
+
+    # auto-placed nodes must not all land on top of each other
+    xs = page.eval_on_selector_all(
+        ".node", "els => els.map(e => Number(e.dataset.x))"
+    )
+    assert len(set(xs)) > 1

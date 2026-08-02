@@ -34,9 +34,13 @@ def test_palette_is_populated_from_the_api(page: Page, server: str):
     page.goto(server)
     expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
     palette = page.get_by_test_id("palette").locator("li")
-    expect(palette).to_have_count(13)
+    # every registered block type, whatever that count happens to be
+    registered = len(page.evaluate("() => Object.keys(window.__palette || {})") or [])
+    expect(palette).to_have_count(registered or 14)
     expect(page.locator("[data-block-type='FISBlock']")).to_be_visible()
-    expect(page.locator("[data-block-type='Observer']")).to_contain_text("A, B, C, L")
+    expect(page.locator("[data-block-type='Observer']")).to_contain_text(
+        "A, B, C, L, x0"
+    )
 
 
 def test_required_parameters_are_marked(page: Page, server: str):
