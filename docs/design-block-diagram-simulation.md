@@ -239,9 +239,9 @@ than being ported twice.
    local `MotorPlant` block, output relabelled V/s, §6 diagonal-equilibrium claim and §9/§10
    convergence claim corrected, Euler -> RK4. Also fixed a false positive in
    `_check_discrete_chain` it exposed.
-7. **The editor itself** — broken into six independently shippable steps in §13,
-   because it is larger than everything before it combined. Stack: FastAPI backend,
-   browser canvas (§11.6).
+7. **The editor itself** — six steps in §13. **7a and 7b done**; 7c-7f deferred as of
+   2026-08-02 in favour of returning to the fuzzy logic itself. See
+   [`future-work.md`](future-work.md).
 
 ## 10. Validation
 

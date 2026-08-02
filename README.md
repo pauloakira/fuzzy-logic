@@ -23,16 +23,23 @@ fuzzy-logic/
 ├── examples/                    # standalone tutorial / demo scripts
 ├── exercises/                   # academic exercises (PCS5708 etc.)
 ├── tests/unit/                  # pytest unit tests
-├── docs/                        # research notes and design decisions
+├── docs/                        # research notes, design decisions, backlog
 │   ├── research-fuzzy-logic.md
 │   ├── research-classical-control.md
 │   ├── research-solid-mech-dynamics.md
-│   └── design-block-diagram-simulation.md
+│   ├── design-block-diagram-simulation.md
+│   └── future-work.md
 │
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
+
+What is built, what is deferred, and where to pick it up is recorded in
+[`docs/future-work.md`](docs/future-work.md). The short version: the simulation and
+editor infrastructure is well ahead of the fuzzy logic it exists to serve, and
+closing that gap — Sugeno/TSK, ANFIS, the remaining defuzzification methods — is
+the next substantive thread.
 
 ## Setup
 
