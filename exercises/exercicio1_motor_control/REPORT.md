@@ -191,6 +191,55 @@ Observations:
 - Since the FIS receives only $(\omega, V)$ and no explicit *setpoint*, this controller, in its current form, regulates the motor at an implicit "middle" regime determined by the rule base. To *track* an arbitrary reference, the inputs would need to be transformed — e.g. use error $e = \omega_{\mathrm{ref}} - \omega$ and error rate $\dot e$ as inputs — preserving the same inference structure.
 - The Mamdani method delivers a smooth and interpretable control surface: each quadrant is clearly associated with a linguistic decision, and tuning becomes a matter of adjusting the rule base or the membership functions, both transparent steps for a domain expert.
 
+---
+
+## Errata — corrections after submission
+
+This report was submitted with a units error and two incorrect claims about the
+controller's equilibrium. The body has been corrected; this records what changed.
+
+### E.1 The output is a voltage rate, not a speed rate
+
+The FIS output was **applied** as $\dot V$ in V/s — the simulation integrates
+`V += output * dt` — but was **labelled** rpm/s throughout: the output variable table,
+the membership-function plots, the control-surface axis, the pointwise table, and §2.
+
+The code was right and the labels were wrong. The assignment asks the controller to
+"increment or decrement the supply voltage", so a voltage rate is the intended output.
+Everything is now labelled V/s. **No simulated behaviour changes** — only the labels.
+
+The submitted §2 also stated that at a full *Acelerar* decision "the source rises 1 V/s and
+the motor responds by accelerating at 1 rpm/s". That is wrong. Since $\omega_{ss} = 10V$,
+a rise of 1 V/s commands **10 rpm/s** of equilibrium-speed change, which the plant's own
+limiter then clips to 1 rpm/s. The two rates differ by exactly the plant gain of 10, and the
+gap is not academic: over a run from rest, $\max\lvert V - \omega/10 \rvert$ reaches
+**48.1 V** near $t = 200$ s — the commanded equilibrium speed running roughly 480 rpm ahead
+of the actual speed.
+
+### E.2 The diagonal is not an equilibrium
+
+Submitted §6 claimed *"Diagonal $\omega \approx 10V$: acceleration close to zero — implicit
+equilibrium."* Evaluating the controller along that line gives $+0.668$ at $(0,0)$,
+$+0.177$ at $(200,20)$, $0.000$ at $(500,50)$, and $-0.668$ at $(1000,100)$. Only
+$(500, 50)$ is a fixed point. Sections §9 and §10 of the submitted report already said this
+correctly, so the report contradicted itself; §6 is now corrected.
+
+### E.3 Convergence was overstated
+
+Submitted §9–§10 stated that the system "converges to the neighbourhood of $(500, 50)$" over
+the plotted 800 s. The states at $t = 800$ s are actually $(577.2, 57.7)$ from rest and
+$(422.8, 42.3)$ from saturation — both about 15 % away. The controller *is* asymptotically
+stable, but the control surface flattens near the fixed point, so true convergence takes on
+the order of $10^5$ s. The claim now matches what the figure shows.
+
+### E.4 Method change
+
+The simulation moved from explicit Euler at $\Delta t = 1.0$ s to RK4 on an assembled block
+diagram. Euler at $\Delta t = 1$ s against the plant's own 1 s time constant was exactly
+dead-beat, so the change is an improvement; it moves the trajectory values in the third
+significant figure ($\omega = 577.4 \to 577.2$ at $t = 800$ s). The pointwise evaluation
+table in §7 is a static FIS evaluation and is **unchanged**.
+
 ## 11. How to run
 
 Install the package once from the repository root, then run the script:

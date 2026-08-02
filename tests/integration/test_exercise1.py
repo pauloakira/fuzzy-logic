@@ -76,6 +76,15 @@ def test_convergence_is_slow_and_the_report_says_so():
     assert abs(sat.col("plant.y", 0)[-1] - 500.0) > 50.0
 
 
+def test_errata_records_the_units_and_equilibrium_corrections():
+    """Exercise 1 was submitted with the output mislabelled rpm/s."""
+    report = (EXERCISE / "REPORT.md").read_text()
+    assert "## Errata" in report
+    assert "48.1" in report                    # the measured V-vs-omega/10 gap
+    assert "577.2" in report and "422.8" in report  # actual t=800 s states
+    assert "V/s" in report
+
+
 def test_controller_validates_and_covers_its_rule_base():
     spec = MC.build_fis_spec()
     assert spec.validate() == []

@@ -239,6 +239,63 @@ This is the typical pattern of an active vibration controller: largest benefit a
 
 ---
 
+---
+
+## Errata — corrections after submission
+
+This report was submitted with the numbers in the left-hand column below. Later
+verification of the code found two measurement errors and one wrong statement.
+The body of the report has been updated; this section records what changed and
+why, so the submitted version can be reconciled with this one.
+
+### E.1 The steady-state window was not steady state
+
+Metrics were taken over the final 4 s of a **12 s** run. The plant's transient decays
+with $\tau = 1/(\zeta\omega_n) = 5$ s, so 8 s of settling is under two time constants —
+the *uncontrolled* reference had not reached its asymptote, while both controlled cases
+had. The error was therefore one-sided, and it **understated** the controller's benefit.
+
+The horizon is now 40 s ($\ge 4\tau$ settling plus the window). The corrected open-loop
+peak matches the analytic $F_0/(c\,\omega_n) = 0.2500$ m to four decimals, which the
+submitted horizon could not.
+
+### E.2 Peak $\lvert u \rvert$ was a whole-run maximum
+
+Every other entry in §9.1 was windowed; peak $\lvert u \rvert$ was computed over the
+entire run. It is now windowed like the rest.
+
+### E.3 Corrected values
+
+| Quantity | As submitted | Corrected | Why |
+| --- | ---: | ---: | --- |
+| Peak $\lvert x \rvert$, uncontrolled (m) | 0.2270 | **0.2499** | E.1 — window was transient |
+| RMS $x$, uncontrolled (m) | 0.1532 | **0.1782** | E.1 |
+| Peak $\lvert x \rvert$, controlled (m) | 0.0742 | **0.0734** | E.1 |
+| RMS $x$, controlled (m) | 0.0526 | **0.0521** | E.1 |
+| Peak $\lvert u \rvert$ (N) | 0.7443 | **0.737** | E.2 — was a whole-run max |
+| Reduction, peak | 67.3 % | **70.6 %** | follows from E.1 |
+| Reduction, RMS | 65.7 % | **70.8 %** | follows from E.1 |
+
+The direction matters: **the submitted figures understated the controller.** The design,
+the rule base, the membership functions, and the qualitative conclusions are unaffected.
+
+### E.4 One wrong recommendation in §11
+
+The submitted §11 suggested that *"a wider force universe would give more authority."*
+That is wrong twice over. The controller never exceeds 0.737 N of the 3 N available, so it
+is not authority-limited; and centroid defuzzification cannot reach the edges of its output
+universe in any case, capping the attainable command at $\pm 2.505$ N. The effective lever
+is the **input scaling gain** — see `REPORT_comparison.md` §3.4.
+
+### E.5 Method changes with no effect on results
+
+The simulation was rewritten from a hand-rolled RK4 loop to an assembled block diagram
+(`fuzzy.sim`). This was verified behaviour-preserving *before* the fixes above were applied:
+the rebuilt model reproduced the submitted numbers to $1.8\times10^{-13}$ in displacement.
+Membership functions and rules also became declarative data rather than Python closures,
+which shifts the control surface by $\sim 10^{-15}$ (one ulp in one breakpoint) and changes
+no reported figure.
+
 ## 12. How to run
 
 The repository must be installed once with `pip install -e .` from the repository root (the scripts no longer manipulate `sys.path`). Then, from the repository root:

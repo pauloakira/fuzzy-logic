@@ -120,6 +120,34 @@ def test_centroid_cannot_reach_the_declared_actuator_limit():
 # ----- the committed spec file ------------------------------------------------
 
 
+# ----- errata integrity -------------------------------------------------------
+
+
+def test_errata_quotes_the_numbers_actually_published():
+    """The reports were submitted before these corrections.
+
+    The errata reconciles the submitted figures with the current ones, so the
+    values it quotes must match what the code now produces — otherwise the
+    correction record is itself wrong.
+    """
+    report = (EXERCISE / "REPORT.md").read_text()
+    assert "## Errata" in report
+    open_m, fuzzy = metrics(None), metrics(S.fuzzy_controller())
+    for value in (f"{open_m['peak']:.4f}", f"{open_m['rms']:.4f}",
+                  f"{fuzzy['peak']:.4f}", f"{fuzzy['rms']:.4f}"):
+        assert value in report, f"errata does not quote {value}"
+    # and the superseded figures are still named, so the record is reconcilable
+    for submitted in ("0.2270", "0.1532", "0.0742", "0.0526", "0.7443", "67.3", "65.7"):
+        assert submitted in report, f"errata drops the submitted value {submitted}"
+
+
+def test_comparison_errata_records_the_reversed_conclusion():
+    report = (EXERCISE / "REPORT_comparison.md").read_text()
+    assert "## Errata" in report
+    assert "structural, not implementational" in report
+    assert "95.9" in report and "96.3" in report  # submitted and corrected
+
+
 def test_committed_diagram_json_is_self_contained():
     """The editor fixture must load with nothing supplied at runtime."""
     path = EXERCISE / "diagram.json"

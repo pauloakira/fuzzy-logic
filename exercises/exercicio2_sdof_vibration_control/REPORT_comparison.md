@@ -176,6 +176,51 @@ For this single-DOF, lightly damped, harmonically excited LTI plant:
 
 The honest summary: **PID is the textbook controller for this problem and reaches its result analytically, but the Mamdani controller is not outclassed on performance — only on the directness with which it can be tuned.**
 
+---
+
+## Errata — corrections after submission
+
+Submitted with the numbers below. The measurement corrections are shared with `REPORT.md`
+(§E.1–E.2 there); this section records them and the one conclusion that reversed.
+
+### E.1 Corrected values
+
+| Quantity | As submitted | Corrected |
+| --- | ---: | ---: |
+| Peak $\lvert x \rvert$, open loop (m) | 0.2270 | **0.2499** |
+| RMS $x$, open loop (m) | 0.1532 | **0.1782** |
+| Peak $\lvert u \rvert$, fuzzy (N) | 0.744 | **0.737** |
+| Peak $\lvert u \rvert$, PID (N) | 0.967 | **0.965** |
+| Reduction, fuzzy | 67.3 % | **70.6 %** |
+| Reduction, PID | 95.9 % | **96.3 %** |
+
+Same cause as `REPORT.md` §E.1: the 4 s metric window sat inside a 12 s run on a plant with
+$\tau = 5$ s, so the open-loop reference was measured before it had settled. Both
+controllers gain slightly; the ranking is unchanged.
+
+### E.2 The central conclusion was wrong
+
+The submitted §4.1 and §5 concluded that the fuzzy controller's shortfall was
+**"structural, not implementational"** — that a 5-term Mamdani controller *cannot* match a
+continuous PID on this plant.
+
+That is not supported. Raising the fuzzy controller's **input scaling gain** to 10 — changing
+no rule, no linguistic term, and nothing about the output universe — takes the same 25-rule
+controller to a peak of 0.0102 m against the PID's 0.0093 m, at essentially identical control
+effort (0.968 N vs 0.965 N). The new §3.4 documents the sweep.
+
+The mechanism is visible in state-space terms: least-squares fitting $u = -(k_1 x + k_2\dot x)$
+to the control surface gives an effective $\zeta \approx 0.06$ at gain 1 and $\zeta \approx 0.33$
+at gain 10, against the PID's $\zeta \approx 0.46$. The two controllers converge because they
+end up placing nearly the same closed-loop poles.
+
+What survives is a claim about **design effort and model dependence**, not attainable
+performance: the PID's gains follow in closed form from a known $m$, $c$, $k$, while the
+fuzzy equivalent had to be found by sweeping. §4.1 and §5 have been rewritten accordingly.
+
+The submitted conclusion was therefore too generous to PID *and* too harsh on the fuzzy
+controller — it attributed a tuning gap to the method itself.
+
 ## 6. How to run
 
 Install the package once from the repository root, then run the comparison:
