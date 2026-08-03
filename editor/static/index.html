@@ -66,6 +66,16 @@
                          value="0.005" min="0.000001" step="any" size="8"></label>
         <button type="button" id="run" data-testid="run">Run</button>
         <span id="run-status" data-testid="run-status"></span>
+        <span class="spacer"></span>
+        <span class="zoom-controls">
+          <button type="button" id="zoom-out" data-testid="zoom-out"
+                  title="Zoom out (−)">−</button>
+          <span id="zoom-level" data-testid="zoom-level">100%</span>
+          <button type="button" id="zoom-in" data-testid="zoom-in"
+                  title="Zoom in (+)">+</button>
+          <button type="button" id="zoom-fit" data-testid="zoom-fit"
+                  title="Fit to view (0)">Fit</button>
+        </span>
       </div>
       <svg id="canvas" data-testid="canvas" role="img"
            aria-label="Block diagram"></svg>

@@ -342,7 +342,12 @@ export function renderDiagram(root, spec, ports = {}, handlers = {}) {
     nodeLayer.appendChild(g);
   }
 
-  fitViewBox(root, spec);
+  // An edit must not throw away the user's pan or zoom.
+  if (root.dataset.userView === "true") {
+    root.dataset.baseWidth = String(contentBox(spec).w);
+  } else {
+    fitView(root, spec);
+  }
   return { nodes: spec.blocks.length, wires: drawnWires, unplaced };
 }
 
@@ -401,21 +406,121 @@ function splitPort(id) {
   return [id.slice(0, i), id.slice(i + 1)];
 }
 
-/** Size the viewBox to the drawn content, with a margin. */
-function fitViewBox(root, spec) {
+export const ZOOM = { min: 0.15, max: 6, step: 1.15 };
+
+/** The current viewBox as an object. */
+export function getView(root) {
+  const [x, y, w, h] = (root.getAttribute("viewBox") || "0 0 100 100")
+    .split(/\s+/).map(Number);
+  return { x, y, w, h };
+}
+
+export function setView(root, view) {
+  // Four decimals, not two: the viewBox is the only place the view is stored, so
+  // rounding it is a lossy read-modify-write and the error accumulates over a
+  // sequence of zooms until the aspect ratio visibly drifts.
+  root.setAttribute("viewBox",
+    `${view.x.toFixed(4)} ${view.y.toFixed(4)} ${view.w.toFixed(4)} ${view.h.toFixed(4)}`);
+  const base = Number(root.dataset.baseWidth) || view.w;
+  root.dataset.zoom = (base / view.w).toFixed(3);
+}
+
+/** The bounding box of the drawn content, with a margin. */
+function contentBox(spec) {
   const xs = spec.blocks.map((b) => b._pos.x);
   const ys = spec.blocks.map((b) => b._pos.y);
   const pad = 28;
-  const minX = Math.min(...xs, 0) - pad;
-  const minY = Math.min(...ys, 0) - pad;
-  const width = Math.max(...xs) + NODE.width + pad - minX;
-  const height = Math.max(...ys) + NODE.height + pad - minY;
-  root.setAttribute("viewBox", `${minX} ${minY} ${width} ${height}`);
+  const x = Math.min(...xs, 0) - pad;
+  const y = Math.min(...ys, 0) - pad;
+  return {
+    x, y,
+    w: Math.max(...xs) + NODE.width + pad - x,
+    h: Math.max(...ys) + NODE.height + pad - y,
+  };
+}
+
+/**
+ * Frame the whole diagram and clear any pan or zoom.
+ *
+ * Block diagrams are wide and flat, so the element takes its content's aspect
+ * ratio (bounded by CSS) rather than sitting letterboxed in a fixed-height box.
+ * Keeping the viewBox aspect equal to the element's is also what stops zooming
+ * from distorting or letterboxing later.
+ */
+export function fitView(root, spec) {
+  const box = contentBox(spec);
   root.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  // Block diagrams are wide and flat; a fixed-height box letterboxes them badly
-  // and shrinks the labels. Let the element take its content's aspect ratio,
-  // bounded by CSS so a tall diagram cannot run off the screen.
-  root.style.aspectRatio = `${width} / ${height}`;
+  root.style.aspectRatio = `${box.w} / ${box.h}`;
+  root.dataset.baseWidth = String(box.w);
+  delete root.dataset.userView;
+  setView(root, box);
+}
+
+/**
+ * Wheel to zoom about the cursor, drag the background to pan.
+ *
+ * Once the user has moved the view it is theirs: `renderDiagram` stops refitting
+ * on every edit, or the diagram would snap back to fit on each keystroke.
+ */
+export function enablePanZoom(root, onChange = null) {
+  if (root.dataset.panzoom === "true") return;
+  root.dataset.panzoom = "true";
+
+  root.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    zoomBy(root, event.deltaY > 0 ? ZOOM.step : 1 / ZOOM.step, event);
+    onChange?.();
+  }, { passive: false });
+
+  root.addEventListener("pointerdown", (event) => {
+    // Only the empty background pans; nodes, wires and ports have their own drags.
+    if (event.target.closest(".node, .wire, .port")) return;
+    event.preventDefault();
+    root.setPointerCapture(event.pointerId);
+    root.dataset.panning = "true";
+    const start = { x: event.clientX, y: event.clientY };
+    const from = getView(root);
+
+    const move = (e) => {
+      // Convert the screen delta with the current scale, so a pan tracks the
+      // cursor exactly at any zoom level.
+      const scale = from.w / (root.clientWidth || 1);
+      root.dataset.userView = "true";
+      setView(root, {
+        ...from,
+        x: from.x - (e.clientX - start.x) * scale,
+        y: from.y - (e.clientY - start.y) * scale,
+      });
+    };
+    const up = () => {
+      root.releasePointerCapture(event.pointerId);
+      delete root.dataset.panning;
+      root.removeEventListener("pointermove", move);
+      root.removeEventListener("pointerup", up);
+      onChange?.();
+    };
+    root.addEventListener("pointermove", move);
+    root.addEventListener("pointerup", up);
+  });
+}
+
+/** Zoom by `factor`, keeping the point under `event` (or the centre) fixed. */
+export function zoomBy(root, factor, event = null) {
+  const view = getView(root);
+  const base = Number(root.dataset.baseWidth) || view.w;
+  const nextW = Math.min(
+    base / ZOOM.min, Math.max(base / ZOOM.max, view.w * factor)
+  );
+  const applied = nextW / view.w;
+  const anchor = event ? toDiagram(root, event)
+                       : { x: view.x + view.w / 2, y: view.y + view.h / 2 };
+  root.dataset.userView = "true";
+  setView(root, {
+    x: anchor.x - (anchor.x - view.x) * applied,
+    y: anchor.y - (anchor.y - view.y) * applied,
+    w: view.w * applied,
+    h: view.h * applied,
+  });
 }
 
 /** Mark the blocks a validation problem points at. Used once 7d lands. */

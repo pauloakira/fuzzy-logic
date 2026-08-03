@@ -64,6 +64,8 @@ aside section + section { margin-top: 1.25rem; }
 #canvas-panel { min-width: 0; }  /* let the SVG shrink inside the grid track */
 
 #canvas {
+  cursor: grab;
+  touch-action: none;   /* the wheel and drag are ours, not the page's */
   width: 100%;
   height: auto;
   max-height: min(72vh, 620px);
@@ -74,7 +76,17 @@ aside section + section { margin-top: 1.25rem; }
   display: block;
 }
 
+#canvas[data-panning] { cursor: grabbing; }
 #canvas-empty { color: var(--muted); }
+
+.zoom-controls { display: flex; align-items: center; gap: 0.25rem; }
+.zoom-controls button { min-width: 1.9rem; }
+[data-testid="zoom-level"] {
+  color: var(--muted);
+  min-width: 3rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 
 /* An id selector outranks the UA's `[hidden] { display: none }`, so hiding
    has to be restated here or the toolbar shows before a diagram is loaded. */

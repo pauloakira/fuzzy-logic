@@ -10,7 +10,13 @@
 // Elements the end-to-end tests assert on carry `data-testid`, so the tests key
 // off stable hooks rather than markup structure.
 
-import { highlightProblems, renderDiagram } from "/static/canvas.js";
+import {
+  enablePanZoom,
+  fitView,
+  highlightProblems,
+  renderDiagram,
+  zoomBy,
+} from "/static/canvas.js";
 import { renderFisEditor, updateSurface } from "/static/fisedit.js";
 import { colourFor, renderPlot } from "/static/plot.js";
 
@@ -303,6 +309,8 @@ async function refresh() {
   });
   canvas.dataset.nodes = String(drawn.nodes);
   canvas.dataset.wires = String(drawn.wires);
+  enablePanZoom(canvas, showZoom);
+  showZoom();
 
   set("block-count", state.spec.blocks.length);
   set("connection-count", state.spec.connections.length);
@@ -348,6 +356,7 @@ async function openDiagram(path) {
     byId("save-path").value = path.replace(/\.json$/, ".draft.json");
     set("save-status", "");
     byId("canvas-empty").hidden = true;
+    delete byId("canvas").dataset.userView;  // frame each diagram when opened
     state.result = null;
     state.shown = [];
     state.fisBlock = null;
@@ -596,7 +605,24 @@ async function run() {
 
 // ----- wiring up --------------------------------------------------------------
 
+function showZoom() {
+  const zoom = Number(byId("canvas").dataset.zoom || 1);
+  set("zoom-level", `${Math.round(zoom * 100)}%`);
+}
+
 function bindToolbar() {
+  byId("zoom-in").addEventListener("click", () => {
+    zoomBy(byId("canvas"), 1 / 1.15);
+    showZoom();
+  });
+  byId("zoom-out").addEventListener("click", () => {
+    zoomBy(byId("canvas"), 1.15);
+    showZoom();
+  });
+  byId("zoom-fit").addEventListener("click", () => {
+    fitView(byId("canvas"), state.spec);
+    showZoom();
+  });
   byId("add-block").addEventListener("change", (e) => {
     if (e.target.value) {
       addBlock(e.target.value);
@@ -608,9 +634,19 @@ function bindToolbar() {
   byId("run").addEventListener("click", run);
   document.addEventListener("keydown", (e) => {
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
-    if (!typing && (e.key === "Delete" || e.key === "Backspace") && state.selected) {
+    if (typing || !state.spec) return;
+    if ((e.key === "Delete" || e.key === "Backspace") && state.selected) {
       e.preventDefault();
       deleteSelected();
+    } else if (e.key === "+" || e.key === "=") {
+      zoomBy(byId("canvas"), 1 / 1.15);
+      showZoom();
+    } else if (e.key === "-") {
+      zoomBy(byId("canvas"), 1.15);
+      showZoom();
+    } else if (e.key === "0") {
+      fitView(byId("canvas"), state.spec);
+      showZoom();
     }
   });
   window.addEventListener("beforeunload", (e) => {
