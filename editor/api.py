@@ -27,9 +27,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from fuzzy.fis import FISValidationError
@@ -50,25 +49,51 @@ megabytes of JSON for a plot that cannot resolve it."""
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+MEDIA_TYPES = {".js": "text/javascript", ".css": "text/css", ".html": "text/html"}
+
 app = FastAPI(title="fuzzy-logic block editor", version="0.1.0")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _stamped(text: str) -> str:
+    """Rewrite every `/static/x.y` reference to carry the file's mtime.
+
+    With no bundler there is no content hash in the filenames, and browsers cache
+    ES modules and stylesheets hard enough that an edited file keeps running the
+    old code through a reload — a changed rule or function silently does nothing.
+
+    Stamping has to cover *module imports too*, not just the tags in the page:
+    `app.js` imports `canvas.js` by absolute path, so versioning only what the
+    HTML references leaves the deepest modules stale, which is exactly the trap
+    this walked into once already.
+    """
+    for asset in sorted(STATIC_DIR.iterdir()):
+        if asset.suffix in MEDIA_TYPES:
+            stamp = int(asset.stat().st_mtime)
+            text = text.replace(
+                f"/static/{asset.name}", f"/static/{asset.name}?v={stamp}"
+            )
+    return text
 
 
 @app.get("/")
 def index() -> HTMLResponse:
-    """The editor page. Plain ES modules — nothing is built or bundled.
+    """The editor page. Plain ES modules — nothing is built or bundled."""
+    return HTMLResponse(_stamped((STATIC_DIR / "index.html").read_text()))
 
-    Asset URLs get a `?v=<mtime>` stamp. With no bundler there is no content
-    hash in the filenames, and a browser that cached a stylesheet once will keep
-    using it through reloads — a changed rule then silently does nothing. The
-    `no-store` header below prevents that going forward; the stamp also fixes
-    anything cached before it existed.
-    """
-    html = (STATIC_DIR / "index.html").read_text()
-    for asset in ("style.css", "app.js"):
-        stamp = int((STATIC_DIR / asset).stat().st_mtime)
-        html = html.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
-    return HTMLResponse(html)
+
+@app.get("/static/{name}")
+def static_asset(name: str) -> Response:
+    """Serve one front-end file, with its own references stamped."""
+    path = (STATIC_DIR / name).resolve()
+    if path.parent != STATIC_DIR or not path.is_file():
+        raise HTTPException(404, detail={"error": f"no such asset: {name}"})
+    media = MEDIA_TYPES.get(path.suffix, "application/octet-stream")
+    body: str | bytes = (
+        _stamped(path.read_text())
+        if path.suffix in MEDIA_TYPES
+        else path.read_bytes()
+    )
+    return Response(body, media_type=media)
 
 
 @app.middleware("http")

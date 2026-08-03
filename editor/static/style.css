@@ -219,6 +219,13 @@ aside section + section { margin-top: 1.25rem; }
   fill: none;
   stroke: var(--wire);
   stroke-width: 1.5;
+  stroke-linejoin: miter;
+  stroke-linecap: butt;
+}
+.wire-arrow { fill: var(--wire); stroke: none; }
+.wire[data-selected] { stroke: var(--accent); stroke-width: 2.5; }
+.wire[data-selected] + .wire-arrow, .wire[data-selected] .wire-arrow {
+  fill: var(--accent);
 }
 
 ul { list-style: none; margin: 0; padding: 0; }

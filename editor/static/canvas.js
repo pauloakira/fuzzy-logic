@@ -97,11 +97,83 @@ function toDiagram(root, event) {
   return { x: q.x, y: q.y };
 }
 
-function wirePath(from, to) {
-  // Horizontal-tangent cubic: leaves an output rightwards, enters an input
-  // leftwards, so feedback wires that run backwards stay readable.
-  const dx = Math.max(40, Math.abs(to.x - from.x) * 0.5);
-  return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
+// Sharp corners, as every block-diagram tool draws them: the whole point of
+// orthogonal routing is that a wire's direction is unambiguous at a glance.
+export const ROUTING = { stub: 16, lane: 26, laneStep: 12, corner: 0 };
+
+/**
+ * Corner points for a wire, orthogonal throughout — the convention every block
+ * diagram tool uses, and the reason a Simulink sheet stays readable where
+ * diagonal splines turn into spaghetti.
+ *
+ * Forward (destination to the right): out horizontally, one vertical leg at the
+ * midpoint, in horizontally.
+ * Backward (a feedback wire): out to the right, down into a lane clear of both
+ * blocks, back across, then up into the input — rather than cutting diagonally
+ * through whatever lies between.
+ */
+export function routePoints(from, to, src, dst, lane = 0) {
+  const { stub, laneStep } = ROUTING;
+
+  // Forward or backward is decided on the ports themselves. Deciding it on the
+  // stubbed positions misroutes any short forward hop whose gap is narrower than
+  // two stubs — it looks like feedback and gets sent on a detour.
+  if (to.x >= from.x) {
+    if (Math.abs(from.y - to.y) < 0.5) return [from, to];   // straight run
+    const mid = (from.x + to.x) / 2;
+    return [from, { x: mid, y: from.y }, { x: mid, y: to.y }, to];
+  }
+
+  const a = { x: from.x + stub, y: from.y };
+  const b = { x: to.x - stub, y: to.y };
+
+  // Feedback: drop below the lower of the two blocks it joins, so the lane stays
+  // local instead of sweeping under the whole diagram. The rubber-band ghost
+  // drawn while wiring has no blocks yet, so it falls back to the ports.
+  const below = src?._pos && dst?._pos
+    ? Math.max(src._pos.y, dst._pos.y) + NODE.height
+    : Math.max(from.y, to.y);
+  const y = below + ROUTING.lane + lane * laneStep;
+  return [from, a, { x: a.x, y }, { x: b.x, y }, b, to];
+}
+
+/** An SVG path through `points`, with corners eased by a small radius. */
+export function polylinePath(points, radius = ROUTING.corner) {
+  const pts = points.filter(
+    (p, i) => i === 0 || Math.hypot(p.x - points[i - 1].x, p.y - points[i - 1].y) > 0.01
+  );
+  if (pts.length < 2) return "";
+  let d = `M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  if (radius <= 0) {
+    return d + pts.slice(1)
+      .map((p) => ` L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join("");
+  }
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const prev = pts[i - 1];
+    const cur = pts[i];
+    const next = pts[i + 1];
+    const rIn = Math.min(radius, Math.hypot(cur.x - prev.x, cur.y - prev.y) / 2);
+    const rOut = Math.min(radius, Math.hypot(next.x - cur.x, next.y - cur.y) / 2);
+    const inUnit = unit(prev, cur);
+    const outUnit = unit(cur, next);
+    const p1 = { x: cur.x - inUnit.x * rIn, y: cur.y - inUnit.y * rIn };
+    const p2 = { x: cur.x + outUnit.x * rOut, y: cur.y + outUnit.y * rOut };
+    d += ` L ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+    d += ` Q ${cur.x.toFixed(2)} ${cur.y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  const last = pts[pts.length - 1];
+  return `${d} L ${last.x.toFixed(2)} ${last.y.toFixed(2)}`;
+}
+
+function unit(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const n = Math.hypot(dx, dy) || 1;
+  return { x: dx / n, y: dy / n };
+}
+
+function wirePath(from, to, src, dst, lane = 0) {
+  return polylinePath(routePoints(from, to, src, dst, lane));
 }
 
 /**
@@ -117,11 +189,21 @@ export function renderDiagram(root, spec, ports = {}, handlers = {}) {
     byName.set(block.name, block);
   }
 
+  const defs = svg("defs");
+  const marker = svg("marker", {
+    id: "wire-arrow", viewBox: "0 0 8 8", refX: 7, refY: 4,
+    markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse",
+  });
+  marker.appendChild(svg("path", { d: "M 0 1 L 7 4 L 0 7 z", class: "wire-arrow" }));
+  defs.appendChild(marker);
+  root.appendChild(defs);
+
   const wireLayer = svg("g", { class: "wires", "data-testid": "wires" });
   const nodeLayer = svg("g", { class: "nodes", "data-testid": "nodes" });
   root.append(wireLayer, nodeLayer);
 
   let drawnWires = 0;
+  let feedbackLanes = 0;
   for (const conn of spec.connections) {
     const [srcName, srcPort] = conn.from;
     const [dstName, dstPort] = conn.to;
@@ -134,13 +216,18 @@ export function renderDiagram(root, spec, ports = {}, handlers = {}) {
     const a = portPosition(src, "outputs", si, src._ports.outputs.length || 1);
     const b = portPosition(dst, "inputs", di, dst._ports.inputs.length || 1);
 
+    // Each feedback wire gets its own lane so two of them do not overlap.
+    const backward = b.x < a.x;
+    const lane = backward ? feedbackLanes++ : 0;
     wireLayer.appendChild(
       svg("path", {
-        d: wirePath(a, b),
+        d: wirePath(a, b, src, dst, lane),
+        "marker-end": "url(#wire-arrow)",
         class: "wire",
         "data-wire": `${srcName}.${srcPort}->${dstName}.${dstPort}`,
         "data-from": srcName,
         "data-to": dstName,
+        "data-lane": lane,
         tabindex: "0",
       })
     );
@@ -274,13 +361,9 @@ function redrawWiresFor(root, spec, byName, name) {
     if (!path) continue;
     const si = Math.max(0, src._ports.outputs.indexOf(srcPort));
     const di = Math.max(0, dst._ports.inputs.indexOf(dstPort));
-    path.setAttribute(
-      "d",
-      wirePath(
-        portPosition(src, "outputs", si, src._ports.outputs.length || 1),
-        portPosition(dst, "inputs", di, dst._ports.inputs.length || 1)
-      )
-    );
+    const a = portPosition(src, "outputs", si, src._ports.outputs.length || 1);
+    const b = portPosition(dst, "inputs", di, dst._ports.inputs.length || 1);
+    path.setAttribute("d", wirePath(a, b, src, dst, Number(path.dataset.lane || 0)));
   }
 }
 

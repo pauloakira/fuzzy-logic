@@ -90,6 +90,71 @@ def test_ports_are_drawn_from_instance_resolved_names(page: Page, server: str):
     expect(page.locator("[data-port='total.ctrl']")).to_have_count(1)
 
 
+# ----- wire routing --------------------------------------------------------------
+
+
+def segments(page: Page, wire: str) -> list[tuple[float, float]]:
+    """The `d` of a wire as a list of points."""
+    d = page.locator(f"[data-wire='{wire}']").get_attribute("d")
+    pts = []
+    for chunk in d.replace("M", " ").replace("L", " ").split():
+        pts.append(float(chunk))
+    return list(zip(pts[0::2], pts[1::2], strict=True))
+
+
+def test_every_wire_segment_is_horizontal_or_vertical(page: Page, server: str):
+    """Orthogonal routing, as every block-diagram tool draws it.
+
+    Diagonal splines were unreadable once more than a couple of wires crossed.
+    """
+    open_diagram(page, server)
+    wires = page.eval_on_selector_all(
+        "[data-wire]", "els => els.map(e => e.dataset.wire)"
+    )
+    assert len(wires) == 8
+    for wire in wires:
+        pts = segments(page, wire)
+        assert len(pts) >= 2, wire
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:], strict=False):
+            axis_aligned = abs(x1 - x2) < 0.02 or abs(y1 - y2) < 0.02
+            assert axis_aligned, f"{wire} has a diagonal segment"
+
+
+def test_wires_have_no_curves(page: Page, server: str):
+    """No bezier or arc commands at all — corners are sharp."""
+    open_diagram(page, server)
+    ds = page.eval_on_selector_all(
+        "[data-wire]", "els => els.map(e => e.getAttribute('d'))"
+    )
+    for d in ds:
+        assert not any(c in d for c in "CcSsQqTtAa"), d
+
+
+def test_a_wire_between_aligned_ports_is_a_single_straight_run(page: Page, server: str):
+    open_diagram(page, server)
+    pts = segments(page, "total.y->plant.u")
+    assert len(pts) == 2
+    assert abs(pts[0][1] - pts[1][1]) < 0.02
+
+
+def test_a_feedback_wire_routes_below_rather_than_across(page: Page, server: str):
+    """`actuator` sits right of `total`, so the wire must go around."""
+    open_diagram(page, server)
+    pts = segments(page, "actuator.y->total.ctrl")
+    assert len(pts) > 2
+    lowest = max(y for _, y in pts)
+    actuator_bottom = 260 + 52  # layout y + node height
+    assert lowest > actuator_bottom, "feedback should drop below the blocks it joins"
+
+
+def test_wires_carry_an_arrowhead(page: Page, server: str):
+    """Direction should be readable without tracing the line."""
+    open_diagram(page, server)
+    wire = page.locator("[data-wire='force.y->total.ext']")
+    assert wire.get_attribute("marker-end") == "url(#wire-arrow)"
+    assert page.locator("#wire-arrow").count() == 1
+
+
 def test_viewbox_fits_the_drawn_content(page: Page, server: str):
     open_diagram(page, server)
     box = page.get_by_test_id("canvas").get_attribute("viewBox")
