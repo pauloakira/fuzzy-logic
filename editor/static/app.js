@@ -11,6 +11,7 @@
 // off stable hooks rather than markup structure.
 
 import { highlightProblems, renderDiagram } from "/static/canvas.js";
+import { renderFisEditor, updateSurface } from "/static/fisedit.js";
 import { colourFor, renderPlot } from "/static/plot.js";
 
 const api = {
@@ -62,6 +63,7 @@ const state = {
   dirty: false,
   result: null,   // the last /api/simulate response
   shown: [],      // which of its signals are plotted
+  fisBlock: null, // name of the FISBlock whose editor is open
 };
 
 // ----- palette and diagram list ----------------------------------------------
@@ -194,7 +196,9 @@ function connect(conn) {
 
 function clearSelection() {
   state.selected = null;
+  state.fisBlock = null;
   byId("selection").hidden = true;
+  byId("fis-editor").hidden = true;
   byId("delete-selected").disabled = true;
 }
 
@@ -204,6 +208,13 @@ function selectBlock(block) {
   byId("selection").hidden = false;
   set("selected-name", block.name);
   set("selected-type", block.type);
+
+  if (block.type === "FISBlock") {
+    openFisEditor(block.name);
+  } else {
+    state.fisBlock = null;
+    byId("fis-editor").hidden = true;
+  }
 
   const dl = document.querySelector('[data-testid="selected-params"]');
   dl.replaceChildren();
@@ -339,7 +350,9 @@ async function openDiagram(path) {
     byId("canvas-empty").hidden = true;
     state.result = null;
     state.shown = [];
+    state.fisBlock = null;
     byId("results").hidden = true;
+    byId("fis-editor").hidden = true;
     await refresh();
     status.textContent = "ready";
     status.dataset.ready = "true";
@@ -353,6 +366,7 @@ async function openDiagram(path) {
     byId("toolbar").hidden = true;
     byId("runbar").hidden = true;
     byId("results").hidden = true;
+    byId("fis-editor").hidden = true;
     clearSelection();
     status.textContent = `could not open ${path}`;
     status.dataset.ready = "error";
@@ -389,6 +403,103 @@ async function save() {
   } catch (err) {
     set("save-status", `not saved: ${err.message}`);
   }
+}
+
+// ----- fuzzy controller editor --------------------------------------------------
+
+function fisDoc(name = state.fisBlock) {
+  return state.spec?.blocks.find((b) => b.name === name)?.params?.fis || null;
+}
+
+let previewToken = 0;
+
+/** Redraw the controller editor from a fresh server-side preview. */
+async function refreshFisEditor() {
+  const doc = fisDoc();
+  if (!doc) return;
+  const mine = ++previewToken;
+  let preview;
+  try {
+    const r = await fetch("/api/fis/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fis: doc }),
+    });
+    if (!r.ok) throw await problem(r, "/api/fis/preview");
+    preview = await r.json();
+  } catch (err) {
+    byId("fis-body").replaceChildren(el("p", { class: "problems" }, err.message));
+    return;
+  }
+  // A slower earlier request must not overwrite a newer one.
+  if (mine !== previewToken) return;
+  window.__lastPreview = preview;
+
+  // Tests (and a human watching) need to know when a redraw has landed; the
+  // surface arrives asynchronously after every edit.
+  byId("fis-editor").dataset.revision = String(mine);
+
+  renderFisEditor(byId("fis-body"), preview, {
+    onTerm: (variable, term, params, { live }) => {
+      const doc = fisDoc();
+      const target = variable === "__output__"
+        ? doc.output.terms[term]
+        : doc.inputs[variable].terms[term];
+      target.params = params;
+      markDirty(true);
+      // While dragging, refresh the surface only — a full re-render would
+      // destroy the handle under the pointer. The curves redraw on release.
+      if (live) scheduleSurfaceRefresh();
+      else refreshFisEditor();
+    },
+    onRule: (antecedents, then) => {
+      const doc = fisDoc();
+      const key = JSON.stringify(antecedents);
+      const idx = doc.rules.findIndex(
+        (r) => JSON.stringify(sortKeys(r.if)) === JSON.stringify(sortKeys(antecedents))
+      );
+      if (!then) {
+        if (idx >= 0) doc.rules.splice(idx, 1);
+      } else if (idx >= 0) {
+        doc.rules[idx].then = then;
+      } else {
+        doc.rules.push({ if: antecedents, then });
+      }
+      void key;
+      markDirty(true);
+      refreshFisEditor();
+      refresh();
+    },
+  });
+}
+
+function sortKeys(obj) {
+  return Object.fromEntries(Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+let previewTimer = null;
+function scheduleSurfaceRefresh() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const doc = fisDoc();
+    if (!doc) return;
+    const r = await fetch("/api/fis/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ fis: doc, surface_resolution: 17 }),
+    });
+    if (!r.ok) return;  // an intermediate drag state can be briefly invalid
+    const preview = await r.json();
+    window.__lastPreview = preview;
+    updateSurface(byId("fis-body"), preview);
+  }, 50);
+}
+
+function openFisEditor(name) {
+  state.fisBlock = name;
+  byId("fis-editor").hidden = false;
+  set("fis-block-name", name);
+  refreshFisEditor();
 }
 
 // ----- running ----------------------------------------------------------------

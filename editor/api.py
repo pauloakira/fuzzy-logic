@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -55,9 +55,20 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
-def index() -> FileResponse:
-    """The editor page. Plain ES modules — nothing is built or bundled."""
-    return FileResponse(STATIC_DIR / "index.html")
+def index() -> HTMLResponse:
+    """The editor page. Plain ES modules — nothing is built or bundled.
+
+    Asset URLs get a `?v=<mtime>` stamp. With no bundler there is no content
+    hash in the filenames, and a browser that cached a stylesheet once will keep
+    using it through reloads — a changed rule then silently does nothing. The
+    `no-store` header below prevents that going forward; the stamp also fixes
+    anything cached before it existed.
+    """
+    html = (STATIC_DIR / "index.html").read_text()
+    for asset in ("style.css", "app.js"):
+        stamp = int((STATIC_DIR / asset).stat().st_mtime)
+        html = html.replace(f"/static/{asset}", f"/static/{asset}?v={stamp}")
+    return HTMLResponse(html)
 
 
 @app.middleware("http")
@@ -84,6 +95,12 @@ class SpecPayload(BaseModel):
 class SavePayload(SpecPayload):
     path: str
     overwrite: bool = False
+
+
+class FISPreviewPayload(BaseModel):
+    fis: dict[str, Any]
+    resolution: int = Field(default=201, ge=11, le=1001)
+    surface_resolution: int = Field(default=25, ge=5, le=61)
 
 
 class SimulatePayload(SpecPayload):
@@ -306,6 +323,67 @@ def post_validate(payload: SpecPayload) -> dict[str, Any]:
         "blocks": [b.name for b in diagram.blocks],
         "ports": _ports(diagram),
     }
+
+
+@app.post("/api/fis/preview")
+def fis_preview(payload: FISPreviewPayload) -> dict[str, Any]:
+    """Membership curves, the control surface, and validation for one controller.
+
+    All the numerics stay on this side. The membership functions are simple
+    enough to reimplement in JavaScript, but Mamdani inference is not, and having
+    the curves and the surface come from *different* implementations is exactly
+    how an editor ends up drawing something the simulator does not agree with.
+    """
+    from fuzzy.fis import FISSpec
+
+    try:
+        spec = FISSpec.from_spec(payload.fis)
+    except (TermError, RuleError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(422, detail=_problem(exc)) from exc
+
+    def curves(var: Any) -> dict[str, Any]:
+        grid = var.universe(payload.resolution)
+        return {
+            "low": var.low,
+            "high": var.high,
+            "grid": grid.tolist(),
+            "terms": {
+                name: {
+                    "kind": term.kind,
+                    "params": list(term.params),
+                    "mu": np.asarray(term(grid), dtype=float).tolist(),
+                }
+                for name, term in var.terms.items()
+            },
+            "partition_error": var.partition_error(),
+        }
+
+    body: dict[str, Any] = {
+        "inputs": {name: curves(var) for name, var in spec.inputs.items()},
+        "output": curves(spec.output),
+        "output_terms": list(spec.output.terms),
+        "rules": spec.rules.to_spec(),
+        "problems": spec.validate(),
+    }
+
+    # A control surface only means something for two inputs; a one-input
+    # controller gets a curve instead, and anything else gets neither.
+    names = list(spec.inputs)
+    if len(names) in (1, 2):
+        engine = spec.build(strict=False)
+        n = payload.surface_resolution
+        axes = [spec.inputs[k].universe(n).tolist() for k in names]
+        if len(names) == 1:
+            z = [[engine.evaluate({names[0]: float(a)}) for a in axes[0]]]
+        else:
+            z = [
+                [engine.evaluate({names[0]: float(a), names[1]: float(b)})
+                 for a in axes[0]]
+                for b in axes[1]
+            ]
+        body["surface"] = {"axes": names, "x": axes[0],
+                           "y": axes[1] if len(names) == 2 else [0.0], "z": z}
+    return body
 
 
 @app.post("/api/simulate")
