@@ -11,6 +11,7 @@
 // off stable hooks rather than markup structure.
 
 import { highlightProblems, renderDiagram } from "/static/canvas.js";
+import { colourFor, renderPlot } from "/static/plot.js";
 
 const api = {
   async get(path) {
@@ -59,6 +60,8 @@ const state = {
   palette: {},
   selected: null, // {kind: "block"|"wire", value}
   dirty: false,
+  result: null,   // the last /api/simulate response
+  shown: [],      // which of its signals are plotted
 };
 
 // ----- palette and diagram list ----------------------------------------------
@@ -279,8 +282,13 @@ async function refresh() {
     onWireSelect: selectWire,
     onConnect: connect,
     // The canvas moves the node itself during the drag; this fires once, at the
-    // end, when the new position has been written into the spec.
-    onMoveEnd: () => markDirty(true),
+    // end, when the new position has been written into the spec. Re-render so
+    // the viewBox refits — without it, a node dragged past the original bounds
+    // stays clipped.
+    onMoveEnd: () => {
+      markDirty(true);
+      refresh();
+    },
   });
   canvas.dataset.nodes = String(drawn.nodes);
   canvas.dataset.wires = String(drawn.wires);
@@ -310,6 +318,7 @@ async function refresh() {
 
   byId("summary").hidden = false;
   byId("toolbar").hidden = false;
+  byId("runbar").hidden = false;
   window.__lastSpec = state.spec;
 }
 
@@ -328,6 +337,9 @@ async function openDiagram(path) {
     byId("save-path").value = path.replace(/\.json$/, ".draft.json");
     set("save-status", "");
     byId("canvas-empty").hidden = true;
+    state.result = null;
+    state.shown = [];
+    byId("results").hidden = true;
     await refresh();
     status.textContent = "ready";
     status.dataset.ready = "true";
@@ -339,6 +351,8 @@ async function openDiagram(path) {
       err.block ? `${err.message} (block: ${err.block})` : err.message;
     byId("summary").hidden = true;
     byId("toolbar").hidden = true;
+    byId("runbar").hidden = true;
+    byId("results").hidden = true;
     clearSelection();
     status.textContent = `could not open ${path}`;
     status.dataset.ready = "error";
@@ -377,6 +391,98 @@ async function save() {
   }
 }
 
+// ----- running ----------------------------------------------------------------
+
+/** Signals worth plotting by default: the plant's outputs and the control command. */
+function defaultSignals(available) {
+  const preferred = available.filter(
+    (k) => k.startsWith("plant.") || k.startsWith("actuator.") ||
+           k.endsWith(".u") || k.startsWith("controller.")
+  );
+  return (preferred.length ? preferred : available).slice(0, 4);
+}
+
+function renderSignalToggles() {
+  const list = byId("signals");
+  list.replaceChildren();
+  const available = Object.keys(state.result?.signals || {}).sort();
+  available.forEach((key) => {
+    const on = state.shown.includes(key);
+    const label = el("label", { "data-signal": key });
+    const box = el("input", { type: "checkbox", "data-signal-toggle": key });
+    box.checked = on;
+    box.addEventListener("change", () => {
+      state.shown = box.checked
+        ? [...state.shown, key]
+        : state.shown.filter((k) => k !== key);
+      drawResult();
+    });
+    const swatch = el("span", { class: "swatch" });
+    swatch.style.background = on ? colourFor(state.shown.indexOf(key)) : "transparent";
+    label.append(box, swatch, document.createTextNode(key));
+    list.appendChild(label);
+  });
+}
+
+function drawResult() {
+  const range = renderPlot(byId("plot"), state.result, state.shown);
+  // `data-series` is the per-path key; the count needs its own name or the
+  // selector picks up the <svg> itself.
+  byId("plot").dataset.seriesCount = String(range?.drawn ?? 0);
+  renderSignalToggles();
+}
+
+async function run() {
+  const t_max = Number(byId("t-max").value);
+  const dt_control = Number(byId("dt").value);
+  set("run-status", "running…");
+  byId("run").disabled = true;
+  try {
+    const r = await fetch("/api/simulate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      // Ask for roughly two samples per device pixel — more is invisible and
+      // just makes the response bigger.
+      body: JSON.stringify({
+        spec: state.spec,
+        t_max,
+        dt_control,
+        max_points: Math.min(
+          4000, Math.max(400, Math.round((byId("plot").clientWidth || 700) * 2))
+        ),
+      }),
+    });
+    if (!r.ok) throw await problem(r, "/api/simulate");
+    state.result = await r.json();
+    window.__lastResult = state.result;
+
+    const available = Object.keys(state.result.signals).sort();
+    // Keep the user's selection across runs; fall back to a sensible default.
+    const kept = state.shown.filter((k) => available.includes(k));
+    state.shown = kept.length ? kept : defaultSignals(available);
+
+    const warnings = byId("run-warnings");
+    warnings.replaceChildren();
+    // The transient-window and RK4 stability guards are usually the most useful
+    // thing on the screen; showing them beats a plot that silently lies.
+    for (const w of state.result.warnings || []) {
+      warnings.appendChild(el("li", {}, w));
+    }
+
+    byId("results").hidden = false;
+    drawResult();
+    set("run-status",
+        `${state.result.n_samples} samples, showing ${state.result.returned}`);
+  } catch (err) {
+    byId("results").hidden = false;
+    byId("run-warnings").replaceChildren(el("li", {}, err.message));
+    byId("plot").replaceChildren();
+    set("run-status", "failed");
+  } finally {
+    byId("run").disabled = false;
+  }
+}
+
 // ----- wiring up --------------------------------------------------------------
 
 function bindToolbar() {
@@ -388,6 +494,7 @@ function bindToolbar() {
   });
   byId("delete-selected").addEventListener("click", deleteSelected);
   byId("save").addEventListener("click", save);
+  byId("run").addEventListener("click", run);
   document.addEventListener("keydown", (e) => {
     const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName);
     if (!typing && (e.key === "Delete" || e.key === "Backspace") && state.selected) {

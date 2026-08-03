@@ -60,6 +60,20 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.middleware("http")
+async def _no_store(request: Any, call_next: Any) -> Any:
+    """Never cache the front end.
+
+    With no bundler there is no content hash in the filenames, and browsers cache
+    ES modules aggressively enough that an edited module keeps running the old
+    code through a reload. For a local editor, correctness beats the cache.
+    """
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
+
+
 # ----- request models ---------------------------------------------------------
 
 

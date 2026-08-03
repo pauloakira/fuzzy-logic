@@ -58,9 +58,25 @@
         <button type="button" id="save" data-testid="save">Save</button>
         <span id="save-status" data-testid="save-status"></span>
       </div>
+
+      <div id="runbar" data-testid="runbar" hidden>
+        <label>t_max <input type="number" id="t-max" data-testid="t-max"
+                            value="40" min="0.001" step="any" size="6"></label>
+        <label>dt <input type="number" id="dt" data-testid="dt"
+                         value="0.005" min="0.000001" step="any" size="8"></label>
+        <button type="button" id="run" data-testid="run">Run</button>
+        <span id="run-status" data-testid="run-status"></span>
+      </div>
       <svg id="canvas" data-testid="canvas" role="img"
            aria-label="Block diagram"></svg>
       <p id="canvas-empty" data-testid="canvas-empty">Choose a diagram to draw it.</p>
+
+      <section id="results" data-testid="results" hidden>
+        <h2>Response</h2>
+        <ul id="run-warnings" data-testid="run-warnings"></ul>
+        <svg id="plot" data-testid="plot" role="img" aria-label="Simulation result"></svg>
+        <ul id="signals" data-testid="signals"></ul>
+      </section>
     </section>
   </main>
 
