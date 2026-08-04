@@ -28,6 +28,7 @@ fuzzy-logic/
 │   ├── research-classical-control.md
 │   ├── research-solid-mech-dynamics.md
 │   ├── design-block-diagram-simulation.md
+│   ├── implementation-block-diagram-boxes.md
 │   └── future-work.md
 │
 ├── pyproject.toml
@@ -136,5 +137,8 @@ log = simulate(d, t_max=40.0, dt_control=0.005)
 ```
 
 A diagram round-trips to a plain JSON spec (`fuzzy.spec.save` / `load`), which is
-the representation the planned graphical editor reads and writes. See
-[`docs/design-block-diagram-simulation.md`](docs/design-block-diagram-simulation.md).
+the representation the graphical editor reads and writes. See
+[`docs/design-block-diagram-simulation.md`](docs/design-block-diagram-simulation.md)
+for the architecture and
+[`docs/implementation-block-diagram-boxes.md`](docs/implementation-block-diagram-boxes.md)
+for what the block shapes on the canvas mean.

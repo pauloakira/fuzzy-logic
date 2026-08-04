@@ -1,6 +1,6 @@
 # Design note — block-diagram simulation core
 
-**Status:** accepted — all phases implemented; 175 tests plus 75 browser end-to-end
+**Status:** accepted — all phases implemented; 175 tests plus 97 browser end-to-end
 tests, CI on 3.11/3.12/3.13
 **Scope:** new modules `fuzzy/sim.py`, `fuzzy/blocks.py`, `fuzzy/metrics.py`
 **Motivation:** remove the plant/controller/integrator coupling that currently forces every
@@ -8,6 +8,10 @@ new experiment to copy a simulation loop.
 
 This is the first `design-*.md` note in `docs/` (existing notes use the `research-*` prefix).
 Convention proposed: `research-*` for theory, `design-*` for architecture decisions.
+
+The editor's drawing convention — what each block shape and icon means, checked
+against Ogata §2–3 and the Simulink documentation — is in
+`docs/implementation-block-diagram-boxes.md`.
 
 ---
 

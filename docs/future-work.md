@@ -116,19 +116,39 @@ is a `StateSpacePlant` with bigger matrices — no new machinery needed.
 
 ---
 
-## 3. The block editor (phases 7c–7f)
+## 3. The block editor — what is left after phase 7
 
-`docs/design-block-diagram-simulation.md` §13 has the full breakdown. Done: 7a
-(structured errors) and 7b (HTTP API, plus a thin page and browser tests in CI).
+Phase 7 is complete: 7a structured errors, 7b HTTP API, 7c canvas rendering, 7d
+interactive editing, 7e run-and-plot, 7f the fuzzy controller editor.
+`docs/design-block-diagram-simulation.md` §13 has the breakdown; the drawing
+convention and its two references are in
+`docs/implementation-block-diagram-boxes.md`.
 
-Remaining: **7c** canvas rendering, **7d** interactive editing, **7e** run-and-plot,
-**7f** the fuzzy controller editor.
+What that convention does not yet implement:
 
-**7f is the one that matters for this project.** 7c–7e give a generic block
-editor; 7f — dragging membership-function breakpoints, editing the rule grid,
-watching the control surface respond — only became possible because of phase 4,
-and is the step that would change how the fuzzy research is actually done. It
-depends on some of 7c's canvas work.
+### 3.1 No branch points
+
+Ogata names the branch point as one of the three elements a block diagram is
+made of, and draws it as a solid dot where one signal feeds several
+destinations. This editor draws an output that feeds three inputs as three
+separate wires leaving the same port — the same topology, a different picture.
+Simulink and Ogata agree here and the editor is the odd one out.
+
+The work is in `renderDiagram()`: group connections by source port, route one
+trunk, and drop a junction dot where each branch leaves it. The wire hit-testing
+and selection then need to distinguish a branch from the trunk.
+
+### 3.2 No obstacle avoidance in routing
+
+`routePoints()` routes orthogonally and gives each feedback wire its own lane
+below the blocks it joins, but it does not know where the other blocks are. In
+`ex2_sdof_fuzzy` the feedback wires cross the `actuator` block. Visible in the
+editor today.
+
+### 3.3 One unidentified browser-test flake
+
+One failure in five full runs of `tests/e2e`, not reproduced in many runs since
+and never captured. Recorded so it is not rediscovered as new.
 
 ---
 
