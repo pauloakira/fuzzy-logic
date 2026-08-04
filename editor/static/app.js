@@ -19,6 +19,7 @@ import {
 } from "/static/canvas.js";
 import { renderFisEditor, updateSurface } from "/static/fisedit.js";
 import { colourFor, renderPlot } from "/static/plot.js";
+import { renderBode, renderPoleZero } from "/static/analysis.js";
 
 const api = {
   async get(path) {
@@ -69,6 +70,7 @@ const state = {
   dirty: false,
   result: null,   // the last /api/simulate response
   shown: [],      // which of its signals are plotted
+  analysis: null, // the last /api/analyze response ({systems}), or null
   fisBlock: null, // name of the FISBlock whose editor is open
 };
 
@@ -357,10 +359,9 @@ async function openDiagram(path) {
     set("save-status", "");
     byId("canvas-empty").hidden = true;
     delete byId("canvas").dataset.userView;  // frame each diagram when opened
-    state.result = null;
     state.shown = [];
     state.fisBlock = null;
-    byId("results").hidden = true;
+    clearResults();
     byId("fis-editor").hidden = true;
     await refresh();
     status.textContent = "ready";
@@ -374,7 +375,7 @@ async function openDiagram(path) {
     byId("summary").hidden = true;
     byId("toolbar").hidden = true;
     byId("runbar").hidden = true;
-    byId("results").hidden = true;
+    clearResults();
     byId("fis-editor").hidden = true;
     clearSelection();
     status.textContent = `could not open ${path}`;
@@ -559,6 +560,40 @@ function drawResult() {
   renderSignalToggles();
 }
 
+/**
+ * Drop the last run and everything drawn from it.
+ *
+ * `#analysis` is a sibling of `#results`, not a child, so hiding the one leaves
+ * the other on screen — opening a second diagram used to keep showing the first
+ * one's Bode plot and poles.
+ */
+function clearResults() {
+  state.result = null;
+  state.analysis = null;
+  byId("results").hidden = true;
+  byId("analysis").hidden = true;
+}
+
+/** Render the Bode and pole-zero charts, or hide the panel when the diagram has
+ *  no LTI plant to analyse. */
+function drawAnalysis() {
+  const systems = state.analysis?.systems ?? [];
+  const has = systems.length > 0;
+  byId("analysis").hidden = false;          // a run happened; explain either way
+  byId("analysis-charts").hidden = !has;
+  byId("analysis-note").hidden = has;
+  if (!has) {
+    byId("analysis-note").textContent =
+      "No frequency response or pole–zero map: this diagram has no linear " +
+      "(state-space) plant. These charts are defined only for an LTI plant, so a " +
+      "nonlinear plant such as the motor has neither. Open a diagram with a " +
+      "StateSpacePlant — the SDOF vibration exercise, for one — to see them.";
+    return;
+  }
+  byId("bode").dataset.systemCount = String(renderBode(byId("bode"), systems));
+  byId("pzmap").dataset.systemCount = String(renderPoleZero(byId("pzmap"), systems));
+}
+
 async function run() {
   const t_max = Number(byId("t-max").value);
   const dt_control = Number(byId("dt").value);
@@ -600,10 +635,27 @@ async function run() {
     drawResult();
     set("run-status",
         `${state.result.n_samples} samples, showing ${state.result.returned}`);
+
+    // Linear analysis (Bode, poles/zeros) of the diagram's LTI plants. The spec
+    // just simulated, so it builds; a failure here should not sink the run, only
+    // hide the analysis panel.
+    try {
+      const a = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ spec: state.spec }),
+      });
+      state.analysis = a.ok ? await a.json() : null;
+    } catch {
+      state.analysis = null;
+    }
+    drawAnalysis();
   } catch (err) {
     byId("results").hidden = false;
     byId("run-warnings").replaceChildren(el("li", {}, err.message));
     byId("plot").replaceChildren();
+    state.analysis = null;
+    byId("analysis").hidden = true;
     set("run-status", "failed");
   } finally {
     byId("run").disabled = false;
@@ -659,6 +711,20 @@ function bindToolbar() {
   window.addEventListener("beforeunload", (e) => {
     if (state.dirty) e.preventDefault();
   });
+  // The plot is fluid-width, but its viewBox is fixed at draw time. Re-draw when
+  // the element resizes so the viewBox stays matched to the pixel box and the
+  // tick labels never stretch — the way a Simulink scope repaints on resize.
+  if (typeof ResizeObserver !== "undefined") {
+    let raf = 0;
+    new ResizeObserver(() => {
+      if (!state.result || byId("results").hidden) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        drawResult();
+        if (!byId("analysis").hidden) drawAnalysis();
+      });
+    }).observe(byId("plot"));
+  }
 }
 
 async function main() {

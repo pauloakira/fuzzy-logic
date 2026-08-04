@@ -151,7 +151,22 @@ aside section + section { margin-top: 1.25rem; }
 .series { fill: none; stroke-width: 1.4; }
 .axis { stroke: var(--line); stroke-width: 1; }
 .axis-zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.grid { stroke: var(--line); stroke-width: 0.5; opacity: 0.45; }
+.pz-pole { stroke-width: 1.6; }
+.pz-zero { fill: none; stroke-width: 1.6; }
 .tick, .plot-empty { fill: var(--muted); font-size: 11px; }
+
+#bode, #pzmap {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--canvas-bg);
+  display: block;
+  margin-top: 0.35rem;
+}
+#bode { height: 320px; }
+#pzmap { height: 300px; }
+#analysis-note { color: var(--muted); font-size: 0.9em; margin: 0.5rem 0; max-width: 60ch; }
 
 #toolbar {
   display: flex;

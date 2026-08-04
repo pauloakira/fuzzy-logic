@@ -38,10 +38,18 @@ export function colourFor(index) {
  * Returns the y-range actually drawn, which the caller reports and the tests
  * assert on.
  */
-export function renderPlot(root, result, keys, size = { width: 720, height: 260 }) {
+export function renderPlot(root, result, keys, size) {
   root.replaceChildren();
+  // Render in the element's own pixel coordinates. A fixed viewBox stretched to
+  // the container with preserveAspectRatio="none" scaled the horizontal axis far
+  // more than the vertical one on a wide plot, which smeared the tick-label
+  // glyphs. Matching the viewBox to the measured box keeps one user unit equal
+  // to one CSS pixel, so text is drawn at its true aspect ratio (Simulink draws
+  // scope tick labels at a fixed size independent of the plot-area shape).
+  if (!size) {
+    size = { width: root.clientWidth || 720, height: root.clientHeight || 260 };
+  }
   root.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
-  root.setAttribute("preserveAspectRatio", "none");
 
   const t = result.t || [];
   const series = keys

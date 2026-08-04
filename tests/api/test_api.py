@@ -251,3 +251,38 @@ def test_simulate_accepts_a_hand_written_minimal_spec():
     body = client.post("/api/simulate", json={"spec": spec, "t_max": 10.0}).json()
     assert max(body["signals"]["sat.y"]) == pytest.approx(1.0)
     assert min(body["signals"]["sat.y"]) == pytest.approx(-1.0)
+
+
+# ----- analyze (Bode, poles/zeros) --------------------------------------------
+
+
+def test_analyze_returns_bode_and_poles_for_the_sdof_plant(spec):
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    systems = body["systems"]
+    plant = next(s for s in systems if s["name"] == "plant")
+    assert len(plant["poles"]) == 2                       # a 2-state SDOF plant
+    n = len(plant["omega"])
+    assert n >= 32
+    for ch in plant["channels"]:
+        assert len(ch["mag_db"]) == n
+        assert len(ch["phase_deg"]) == n
+    # The velocity channel of an SDOF plant has one transfer zero at the origin.
+    vel = next(ch for ch in plant["channels"] if ch["label"] == "plant.y[1]")
+    assert len(vel["zeros"]) == 1
+    assert abs(vel["zeros"][0][0]) < 1e-6 and abs(vel["zeros"][0][1]) < 1e-6
+
+
+def test_analyze_is_empty_without_an_lti_plant():
+    """A diagram with no StateSpacePlant has nothing to analyse, and says so."""
+    spec = {
+        "version": 1,
+        "name": "no plant",
+        "blocks": [
+            {"type": "Harmonic", "name": "src",
+             "params": {"amplitude": 1.0, "omega": 1.0, "phase": 0.0}},
+            {"type": "Saturation", "name": "sat", "params": {"lo": -1.0, "hi": 1.0}},
+        ],
+        "connections": [{"from": ["src", "y"], "to": ["sat", "u"]}],
+    }
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    assert body["systems"] == []

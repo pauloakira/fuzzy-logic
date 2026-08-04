@@ -29,6 +29,7 @@ from typing import Any
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse, JSONResponse
+from numpy.typing import NDArray
 from pydantic import BaseModel, Field
 
 from fuzzy.fis import FISValidationError
@@ -133,6 +134,10 @@ class SimulatePayload(SpecPayload):
     dt_control: float = Field(default=0.005, gt=0.0)
     n_substeps: int = Field(default=1, ge=1, le=64)
     max_points: int = Field(default=MAX_POINTS, ge=2, le=20000)
+
+
+class AnalyzePayload(SpecPayload):
+    n_omega: int = Field(default=400, ge=32, le=4000)
 
 
 # ----- helpers ----------------------------------------------------------------
@@ -450,6 +455,72 @@ def post_simulate(payload: SimulatePayload) -> dict[str, Any]:
         "returned": len(_decimate(log.t, payload.max_points)),
         "warnings": [str(w.message) for w in caught],
     }
+
+
+@app.post("/api/analyze")
+def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
+    """Linear analysis of the diagram's LTI plants: Bode data, poles, and zeros.
+
+    Only `StateSpacePlant` blocks are analysed — they are the blocks that carry a
+    full `(A, B, C, D)`. A nonlinear plant (`MotorPlant`) or a diagram with no
+    state-space block yields an empty `systems` list, and the editor then hides
+    the frequency and pole-zero panels. Each output/input channel becomes one
+    labelled curve, matching the `plant.y[i]` split the time plot already uses.
+    """
+    from fuzzy.analysis import frequency_grid, frequency_response
+    from fuzzy.analysis import poles as _poles
+    from fuzzy.analysis import zeros as _zeros
+    from fuzzy.blocks import StateSpacePlant
+
+    diagram = _build(payload.spec)
+    systems: list[dict[str, Any]] = []
+
+    def points(vals: NDArray[np.complex128]) -> list[list[float]]:
+        return [[float(v.real), float(v.imag)] for v in vals]
+
+    for block in diagram.blocks:
+        if not isinstance(block, StateSpacePlant):
+            continue
+        A, B, C, D = block.A, block.B, block.C, block.D
+        n_out, n_in = C.shape[0], B.shape[1]
+        pol = _poles(A)
+
+        chan_zeros: dict[tuple[int, int], NDArray[np.complex128]] = {}
+        critical = list(pol)
+        for i in range(n_out):
+            for j in range(n_in):
+                z = _zeros(A, B[:, j], C[i], D[i, j])
+                chan_zeros[(i, j)] = z
+                critical.extend(z)
+
+        omega = frequency_grid(np.asarray(critical), n=payload.n_omega)
+        H = frequency_response(A, B, C, D, omega)
+
+        channels = []
+        for i in range(n_out):
+            for j in range(n_in):
+                h = H[:, i, j]
+                label = f"{block.name}.y[{i}]" if n_out > 1 else f"{block.name}.y"
+                if n_in > 1:
+                    label += f"<-u[{j}]"
+                # Guard log10(0); a true zero of |H| is -inf dB, which JSON and
+                # a plot both dislike, so it is floored well below any real curve.
+                mag = np.abs(h)
+                channels.append({
+                    "label": label,
+                    "mag_db": (20.0 * np.log10(np.maximum(mag, 1e-12))).tolist(),
+                    "phase_deg": np.degrees(np.unwrap(np.angle(h))).tolist(),
+                    "zeros": points(chan_zeros[(i, j)]),
+                })
+
+        systems.append({
+            "name": block.name,
+            "omega": omega.tolist(),
+            "poles": points(pol),
+            "channels": channels,
+        })
+
+    return {"systems": systems}
 
 
 @app.exception_handler(HTTPException)

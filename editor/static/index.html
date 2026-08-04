@@ -92,6 +92,16 @@
         <svg id="plot" data-testid="plot" role="img" aria-label="Simulation result"></svg>
         <ul id="signals" data-testid="signals"></ul>
       </section>
+
+      <section id="analysis" data-testid="analysis" hidden>
+        <p id="analysis-note" data-testid="analysis-note" hidden></p>
+        <div id="analysis-charts">
+          <h2>Frequency response</h2>
+          <svg id="bode" data-testid="bode" role="img" aria-label="Bode plot"></svg>
+          <h2>Poles &amp; zeros</h2>
+          <svg id="pzmap" data-testid="pzmap" role="img" aria-label="Pole-zero map"></svg>
+        </div>
+      </section>
     </section>
   </main>
 
