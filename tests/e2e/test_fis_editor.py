@@ -9,8 +9,10 @@ Python closure; because it is data, it can be dragged.
 
 from __future__ import annotations
 
+import time
+
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 EX2 = "exercises/exercicio2_sdof_vibration_control/diagram.json"
 
@@ -149,6 +151,32 @@ def test_dragging_a_breakpoint_changes_the_control_surface(page: Page, server: s
     after = surface_values(page)
     assert after != before
     assert max(abs(a - b) for a, b in zip(after, before, strict=True)) > 1e-3
+
+
+def test_a_drag_time_preview_cannot_overwrite_the_settled_one(page: Page, server: str):
+    """While dragging, the surface is refetched at a coarse 17x17 for speed; on
+    release it is refetched in full at 25x25. The coarse request is debounced
+    and was untokened, so if it landed last it replaced the settled surface with
+    one computed from a half-finished drag. Intermittent in the wild — this
+    forces it by holding the coarse response back until the full one has landed.
+    """
+
+    def hold_back_the_coarse_one(route: Route) -> None:
+        body = (route.request.post_data or "").replace(" ", "")
+        if '"surface_resolution":17' in body:
+            time.sleep(0.6)
+        route.continue_()
+
+    page.route("**/api/fis/preview", hold_back_the_coarse_one)
+    open_controller(page, server)
+    settled = len(surface_values(page))
+    rev = revision(page)
+
+    drag_handle(page, "__output__.PG.0", -40)
+    await_redraw(page, rev)
+    page.wait_for_timeout(1500)  # long enough for the held-back one to arrive
+
+    assert len(surface_values(page)) == settled
 
 
 def test_a_drag_cannot_push_a_breakpoint_past_its_neighbour(page: Page, server: str):

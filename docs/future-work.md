@@ -145,10 +145,18 @@ below the blocks it joins, but it does not know where the other blocks are. In
 `ex2_sdof_fuzzy` the feedback wires cross the `actuator` block. Visible in the
 editor today.
 
-### 3.3 One unidentified browser-test flake
+### 3.3 The browser-test flake — found and fixed
 
-One failure in five full runs of `tests/e2e`, not reproduced in many runs since
-and never captured. Recorded so it is not rediscovered as new.
+Resolved 2026-08-03. It was a real client bug, not a test artefact: the coarse
+17×17 surface fetched *during* a breakpoint drag did not share `previewToken`
+with the settled 25×25 refetch on release, so whichever landed last won. When
+the coarse one landed last it replaced the settled surface with one computed
+from a half-finished drag — and `test_dragging_a_breakpoint_changes_the_control_surface`
+then compared 289 values against 625.
+
+Fixed in `refreshFisEditor`/`scheduleSurfaceRefresh` (`editor/static/app.js`);
+`test_a_drag_time_preview_cannot_overwrite_the_settled_one` forces the race by
+holding the coarse response back with a route interceptor.
 
 ---
 

@@ -426,6 +426,9 @@ let previewToken = 0;
 async function refreshFisEditor() {
   const doc = fisDoc();
   if (!doc) return;
+  // A drag-time refresh may still be armed from the last pointermove. It would
+  // fire after this one and replace the settled surface with a coarse one.
+  clearTimeout(previewTimer);
   const mine = ++previewToken;
   let preview;
   try {
@@ -492,6 +495,9 @@ function scheduleSurfaceRefresh() {
   previewTimer = setTimeout(async () => {
     const doc = fisDoc();
     if (!doc) return;
+    // Shares `previewToken` with the settled refresh, so a coarse surface in
+    // flight when the drag ends loses to the full-resolution one that follows.
+    const mine = ++previewToken;
     const r = await fetch("/api/fis/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -499,6 +505,7 @@ function scheduleSurfaceRefresh() {
     });
     if (!r.ok) return;  // an intermediate drag state can be briefly invalid
     const preview = await r.json();
+    if (mine !== previewToken) return;
     window.__lastPreview = preview;
     updateSurface(byId("fis-body"), preview);
   }, 50);
