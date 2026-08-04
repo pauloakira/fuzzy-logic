@@ -29,6 +29,7 @@ fuzzy-logic/
 │   ├── research-solid-mech-dynamics.md
 │   ├── design-block-diagram-simulation.md
 │   ├── implementation-block-diagram-boxes.md
+│   ├── implementation-linearization.md
 │   └── future-work.md
 │
 ├── pyproject.toml

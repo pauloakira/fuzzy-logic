@@ -168,6 +168,18 @@ aside section + section { margin-top: 1.25rem; }
 #pzmap { height: 300px; }
 #analysis-note { color: var(--muted); font-size: 0.9em; margin: 0.5rem 0; max-width: 60ch; }
 
+/* A linearization's caveats. Not `--bad`: nothing failed, but a small-signal
+   model taken on a limiter is wrong in a way the chart cannot show. */
+#analysis-warnings { margin: 0.5rem 0; padding-left: 1.1rem; }
+#analysis-warnings:empty { display: none; }
+#analysis-warnings li {
+  color: var(--muted);
+  font-size: 0.88em;
+  max-width: 78ch;
+  margin-bottom: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
 #toolbar {
   display: flex;
   align-items: center;

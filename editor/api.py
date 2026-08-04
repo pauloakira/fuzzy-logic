@@ -136,8 +136,18 @@ class SimulatePayload(SpecPayload):
     max_points: int = Field(default=MAX_POINTS, ge=2, le=20000)
 
 
+class OperatingPoint(BaseModel):
+    """Where to linearize one block: its state, and its inputs by port name."""
+
+    x: list[float] | None = None
+    u: dict[str, Any] | None = None
+
+
 class AnalyzePayload(SpecPayload):
     n_omega: int = Field(default=400, ge=32, le=4000)
+    # Per block name. A block not named here is linearized about its own initial
+    # state with zero on every input.
+    operating_point: dict[str, OperatingPoint] | None = None
 
 
 # ----- helpers ----------------------------------------------------------------
@@ -459,18 +469,25 @@ def post_simulate(payload: SimulatePayload) -> dict[str, Any]:
 
 @app.post("/api/analyze")
 def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
-    """Linear analysis of the diagram's LTI plants: Bode data, poles, and zeros.
+    """Bode data, poles, and zeros for every block of the diagram that carries state.
 
-    Only `StateSpacePlant` blocks are analysed — they are the blocks that carry a
-    full `(A, B, C, D)`. A nonlinear plant (`MotorPlant`) or a diagram with no
-    state-space block yields an empty `systems` list, and the editor then hides
-    the frequency and pole-zero panels. Each output/input channel becomes one
-    labelled curve, matching the `plant.y[i]` split the time plot already uses.
+    A `StateSpacePlant` is already `(A, B, C, D)` and is analysed as it stands.
+    Any other stateful block — `MotorPlant`, say — is **linearized** about an
+    operating point first (Ogata §2-7), and the system it yields is marked
+    `linearized: true` and carries the `warnings` from that linearization. Those
+    warnings are not decoration: a plant linearized where a limiter is active
+    produces a Bode plot that looks entirely reasonable and describes nothing.
+
+    The operating point defaults to the block's own initial state with zero on
+    every input; `operating_point` overrides it per block. Each output/input
+    channel becomes one labelled curve, matching the `plant.y[i]` split the time
+    plot already uses.
     """
     from fuzzy.analysis import frequency_grid, frequency_response
     from fuzzy.analysis import poles as _poles
     from fuzzy.analysis import zeros as _zeros
     from fuzzy.blocks import StateSpacePlant
+    from fuzzy.linearize import LinearizationError, linearize
 
     diagram = _build(payload.spec)
     systems: list[dict[str, Any]] = []
@@ -479,9 +496,34 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
         return [[float(v.real), float(v.imag)] for v in vals]
 
     for block in diagram.blocks:
-        if not isinstance(block, StateSpacePlant):
+        warnings: list[str] = []
+        linearized = False
+        if isinstance(block, StateSpacePlant):
+            A, B, C, D = block.A, block.B, block.C, block.D
+        elif block.n_states:
+            at = (payload.operating_point or {}).get(block.name)
+            try:
+                lin = linearize(
+                    block,
+                    x0=None if at is None or at.x is None else np.asarray(at.x),
+                    u0=None if at is None else at.u,
+                )
+            except (LinearizationError, KeyError, ValueError, TypeError) as exc:
+                # One block that will not linearize must not sink the others.
+                systems.append({
+                    "name": block.name, "omega": [], "poles": [], "channels": [],
+                    "linearized": True, "failed": str(exc), "warnings": [],
+                })
+                continue
+            A, B, C, D = lin.A, lin.B, lin.C, lin.D
+            warnings = list(lin.warnings)
+            linearized = True
+        else:
             continue
-        A, B, C, D = block.A, block.B, block.C, block.D
+
+        if not A.size or not B.size:
+            continue  # nothing with dynamics to plot
+
         n_out, n_in = C.shape[0], B.shape[1]
         pol = _poles(A)
 
@@ -518,6 +560,8 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
             "omega": omega.tolist(),
             "poles": points(pol),
             "channels": channels,
+            "linearized": linearized,
+            "warnings": warnings,
         })
 
     return {"systems": systems}

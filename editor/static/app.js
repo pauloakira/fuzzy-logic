@@ -590,6 +590,26 @@ function drawAnalysis() {
       "StateSpacePlant — the SDOF vibration exercise, for one — to see them.";
     return;
   }
+  // A linearized model is only valid where the block is differentiable, and the
+  // charts look identical either way — so the caveats have to be on screen, not
+  // buried in the payload. A plant linearized on a limiter plots a clean curve
+  // that describes nothing.
+  const notes = [];
+  for (const s of systems) {
+    if (s.failed) {
+      notes.push(`${s.name}: could not be linearized — ${s.failed}`);
+      continue;
+    }
+    if (s.linearized) {
+      notes.push(
+        `${s.name} is nonlinear; these charts are its linearization about the ` +
+        "current operating point, valid only for small signals around it."
+      );
+    }
+    for (const w of s.warnings || []) notes.push(`${s.name}: ${w}`);
+  }
+  byId("analysis-warnings").replaceChildren(...notes.map((n) => el("li", {}, n)));
+
   byId("bode").dataset.systemCount = String(renderBode(byId("bode"), systems));
   byId("pzmap").dataset.systemCount = String(renderPoleZero(byId("pzmap"), systems));
 }

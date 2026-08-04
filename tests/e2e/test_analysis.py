@@ -97,14 +97,33 @@ def test_a_channel_has_the_same_colour_in_both_charts(page: Page, server: str):
 # ----- a diagram with nothing to analyse ------------------------------------------
 
 
-def test_a_nonlinear_plant_gets_an_explanation_not_an_empty_chart(
-    page: Page, server: str
-):
+def test_a_nonlinear_plant_is_linearized_and_labelled_as_such(page: Page, server: str):
+    """`MotorPlant` has no (A,B,C,D) of its own; it is linearized, and the charts
+    have to say so or they read as the plant itself."""
     open_diagram(page, server, EX1)
     run(page, t_max="800", dt="1")
     expect(page.get_by_test_id("analysis")).to_be_visible()
-    expect(page.get_by_test_id("analysis-note")).to_be_visible()
-    expect(page.get_by_test_id("analysis-note")).to_contain_text("no linear")
+    expect(page.get_by_test_id("bode")).to_be_visible()
+    expect(page.get_by_test_id("analysis-warnings")).to_contain_text("is nonlinear")
+
+
+def test_linearizing_on_a_limit_is_said_out_loud(page: Page, server: str):
+    """The motor starts at (0 rpm, 0 V) — both lower clamps. The Bode plot drawn
+    there looks perfectly reasonable and describes a corner, so the only thing
+    standing between the reader and a wrong conclusion is this warning."""
+    open_diagram(page, server, EX1)
+    run(page, t_max="800", dt="1")
+    expect(page.get_by_test_id("analysis-warnings")).to_contain_text(
+        "not differentiable"
+    )
+
+
+def test_an_lti_plant_carries_no_linearization_caveats(page: Page, server: str):
+    """The SDOF plant is exactly linear, so there is nothing to warn about and a
+    warning would train the reader to ignore them."""
+    open_diagram(page, server, EX2)
+    run(page)
+    expect(page.get_by_test_id("analysis-warnings").locator("li")).to_have_count(0)
 
 
 def test_opening_another_diagram_clears_the_analysis(page: Page, server: str):

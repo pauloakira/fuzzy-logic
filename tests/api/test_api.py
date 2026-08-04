@@ -286,3 +286,52 @@ def test_analyze_is_empty_without_an_lti_plant():
     }
     body = client.post("/api/analyze", json={"spec": spec}).json()
     assert body["systems"] == []
+
+
+def test_analyze_linearizes_a_nonlinear_plant():
+    """`MotorPlant` has no (A,B,C,D); it gets one from a Jacobian, and says so."""
+    spec = json.loads(
+        (REPO_ROOT / "exercises/exercicio1_motor_control/diagram.json").read_text()
+    )
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    plant = next(s for s in body["systems"] if s["name"] == "plant")
+    assert plant["linearized"] is True
+    assert len(plant["poles"]) == 2
+    assert len(plant["channels"]) == 2
+
+
+def test_analyze_reports_that_the_default_operating_point_is_on_a_limit():
+    """The motor starts at (0 rpm, 0 V), which is both lower clamps at once — the
+    linearization there is a model of a corner, and must not pass silently."""
+    spec = json.loads(
+        (REPO_ROOT / "exercises/exercicio1_motor_control/diagram.json").read_text()
+    )
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    plant = next(s for s in body["systems"] if s["name"] == "plant")
+    assert any("not differentiable" in w for w in plant["warnings"])
+
+
+def test_analyze_takes_an_operating_point_and_the_warnings_go_away():
+    """Moved off the clamps the motor is smooth, and the model is trustworthy."""
+    spec = json.loads(
+        (REPO_ROOT / "exercises/exercicio1_motor_control/diagram.json").read_text()
+    )
+    body = client.post(
+        "/api/analyze",
+        json={
+            "spec": spec,
+            "operating_point": {"plant": {"x": [500.0, 50.0], "u": {"u": 0.0}}},
+        },
+    ).json()
+    plant = next(s for s in body["systems"] if s["name"] == "plant")
+    assert plant["warnings"] == []
+    # omega' = k V - omega with k = 10 gives one mode at -1 plus the V integrator
+    reals = sorted(round(p[0], 6) for p in plant["poles"])
+    assert reals == [-1.0, 0.0]
+
+
+def test_analyze_marks_a_genuine_lti_plant_as_not_linearized(spec):
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    plant = next(s for s in body["systems"] if s["name"] == "plant")
+    assert plant["linearized"] is False
+    assert plant["warnings"] == []
