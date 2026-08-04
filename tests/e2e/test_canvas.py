@@ -51,11 +51,26 @@ def test_nodes_sit_at_their_spec_coordinates(page: Page, server: str):
     expect(force).to_have_attribute("data-y", "40")
 
 
-def test_nodes_are_labelled_with_name_and_type(page: Page, server: str):
+def test_the_name_is_labelled_below_the_block(page: Page, server: str):
+    """Simulink's convention: the face carries the icon, the name goes under."""
     open_diagram(page, server)
     plant = page.locator(".node[data-block='plant']")
     expect(plant.locator(".node-name")).to_have_text("plant")
-    expect(plant.locator(".node-type")).to_have_text("StateSpacePlant")
+    expect(plant).to_have_attribute("data-type", "StateSpacePlant")
+
+    name = plant.locator(".node-name").bounding_box()
+    shape = plant.locator(".node-shape").bounding_box()
+    assert name["y"] > shape["y"] + shape["height"]
+
+
+def test_the_face_shows_what_the_block_computes(page: Page, server: str):
+    """A plant's icon is its equation, not a repeat of its class name."""
+    open_diagram(page, server)
+    plant = page.locator(".node[data-block='plant'] .node-icon")
+    expect(plant).to_contain_text("x' = Ax+Bu")
+    expect(plant).to_contain_text("y = Cx+Du")
+    # a source draws a line glyph instead — a sine, for the harmonic disturbance
+    expect(page.locator(".node[data-block='force'] .node-icon .glyph")).to_have_count(1)
 
 
 def test_wires_name_both_endpoints(page: Page, server: str):
@@ -67,17 +82,31 @@ def test_wires_name_both_endpoints(page: Page, server: str):
     expect(page.locator("[data-wire='actuator.y->total.ctrl']")).to_have_count(1)
 
 
-def test_shapes_distinguish_sources_and_sampled_blocks(page: Page, server: str):
-    """Matches `to_mermaid()`, so the live view and the report figure agree."""
+def test_the_outline_says_what_kind_of_block_it_is(page: Page, server: str):
+    """Simulink's shapes: a sum is round, a gain is a triangle, the rest square."""
     open_diagram(page, server)
-    # a source has no inputs -> parallelogram
-    expect(page.locator(".node[data-block='force'] polygon")).to_have_count(1)
-    # a continuous block -> square-cornered rect
-    plant_rx = page.locator(".node[data-block='plant'] rect").get_attribute("rx")
-    assert float(plant_rx) < 10
-    # a sampled block -> fully rounded
-    ctrl_rx = page.locator(".node[data-block='controller'] rect").get_attribute("rx")
-    assert float(ctrl_rx) > 20
+    expect(page.locator(".node[data-block='total'] circle.node-shape")).to_have_count(1)
+    expect(page.locator(".node[data-block='plant'] rect.node-shape")).to_have_count(1)
+
+    page.get_by_test_id("add-block").select_option("Gain")
+    expect(
+        page.locator(".node[data-type='Gain'] polygon.node-shape")
+    ).to_have_count(1)
+
+
+def test_a_sum_shows_its_signs_at_its_ports(page: Page, server: str):
+    """`signs` is the whole content of a Sum block, so it belongs on the icon."""
+    open_diagram(page, server)
+    signs = page.locator(".node[data-block='total'] .port-sign")
+    expect(signs).to_have_count(2)
+    assert set(signs.all_text_contents()) <= {"+", "−"}
+
+
+def test_sampled_blocks_are_annotated_with_a_sample_time(page: Page, server: str):
+    """Simulink tags the rate rather than changing the block's shape."""
+    open_diagram(page, server)
+    expect(page.locator(".node[data-block='controller'] .node-ts")).to_have_text("Ts")
+    expect(page.locator(".node[data-block='plant'] .node-ts")).to_have_count(0)
 
 
 def test_ports_are_drawn_from_instance_resolved_names(page: Page, server: str):
@@ -225,8 +254,8 @@ def test_exercise_one_also_draws(page: Page, server: str):
     canvas = page.get_by_test_id("canvas")
     expect(canvas).to_have_attribute("data-nodes", "5")
     expect(canvas).to_have_attribute("data-wires", "6")
-    expect(page.locator(".node[data-block='plant'] .node-type")).to_have_text(
-        "MotorPlant"
+    expect(page.locator(".node[data-block='plant']")).to_have_attribute(
+        "data-type", "MotorPlant"
     )
 
 

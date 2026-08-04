@@ -5,16 +5,72 @@
 // are a few dozen lines of SVG, which is cheaper than a flow-canvas library and
 // its toolchain for the ten block types this project has.
 //
-// The node shapes mirror `Diagram.to_mermaid()` so the interactive view and the
-// figure in the reports read the same way: sources are skewed, sampled
-// (zero-order-held) blocks are rounded, continuous blocks are square.
+// The node shapes follow Simulink's conventions rather than the Mermaid figure
+// in the reports: the outline says what kind of block it is (a gain is a
+// triangle, a sum is a circle, everything else a rectangle), the face carries
+// the icon or equation it implements, and the block's *name* sits underneath.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-export const NODE = { width: 132, height: 52, portRadius: 4.5, gap: 14 };
+export const NODE = { width: 100, height: 52, portRadius: 4, labelGap: 14 };
 
-/** Block types that are sampled at the control rate; drawn rounded. */
+/** Blocks sampled at the control rate. Simulink annotates sample time rather
+ *  than changing the shape, so these get a small `Ts` tag in the corner. */
 const SAMPLED = new Set(["FISBlock", "PIDBlock", "StateFeedback"]);
+
+/**
+ * How each block draws itself, following Simulink's conventions: the outline
+ * says what *kind* of thing it is (a gain is a triangle, a sum is a circle) and
+ * the face carries an icon or the equation it implements — `1/s`, `x' = Ax+Bu`.
+ * The block's *name* goes underneath, not inside.
+ *
+ * Sources: mathworks.com/help/simulink/ug/configure-model-element-names-and-labels.html
+ *          mathworks.com/help/simulink/slref/sum.html
+ */
+const SHAPE = { Gain: "triangle", StateFeedback: "triangle", Sum: "circle" };
+
+function num(v, digits = 3) {
+  if (typeof v !== "number") return String(v ?? "");
+  if (!Number.isFinite(v)) return v > 0 ? "\u221e" : "-\u221e";
+  return String(Number(v.toPrecision(digits)));
+}
+
+/** What goes on the block face. */
+function icon(block) {
+  const p = block.params || {};
+  switch (block.type) {
+    case "Gain": return { text: Array.isArray(p.k) ? "K" : num(p.k) };
+    case "StateFeedback": return { text: "-K\u00b7x" };
+    case "Constant":
+      return { text: Array.isArray(p.value) ? "c" : num(p.value) };
+    case "Select": return { text: `u[${p.index ?? 0}]` };
+    case "Harmonic": return { glyph: "sine" };
+    case "Step": return { glyph: "step" };
+    case "Saturation": return { glyph: "saturation" };
+    case "Sum": return { text: "" };  // the port signs are the icon
+    case "StateSpacePlant": return { lines: ["x' = Ax+Bu", "y = Cx+Du"] };
+    case "MotorPlant": return { lines: ["\u03c9' = k\u00b7V - \u03c9", "V' = u"] };
+    case "Observer": return { lines: ["x\u0302' = Ax\u0302+Bu", "+ L(y-Cx\u0302)"] };
+    case "PIDBlock": return { text: "PID" };
+    case "FISBlock": return { text: "FIS", sub: "Mamdani" };
+    default: return { text: block.type };
+  }
+}
+
+/** Small line drawings, the way Simulink draws its source and nonlinearity icons. */
+const GLYPHS = {
+  sine: (w, h) => {
+    const pts = [];
+    for (let i = 0; i <= 24; i += 1) {
+      const t = i / 24;
+      pts.push(`${(t * w).toFixed(1)},${(h / 2 - Math.sin(t * Math.PI * 2) * h * 0.34).toFixed(1)}`);
+    }
+    return `M ${pts.join(" L ")}`;
+  },
+  step: (w, h) => `M 0 ${h * 0.78} L ${w * 0.42} ${h * 0.78} L ${w * 0.42} ${h * 0.22} L ${w} ${h * 0.22}`,
+  saturation: (w, h) =>
+    `M 0 ${h * 0.82} L ${w * 0.3} ${h * 0.82} L ${w * 0.7} ${h * 0.18} L ${w} ${h * 0.18}`,
+};
 
 function svg(tag, attrs = {}, text = "") {
   const node = document.createElementNS(SVG_NS, tag);
@@ -38,11 +94,16 @@ function portsOf(block, ports) {
 /** Where a port sits, in diagram coordinates. */
 export function portPosition(block, side, index, count) {
   const { x, y } = block._pos;
-  const span = NODE.height / (count + 1);
-  return {
-    x: side === "inputs" ? x : x + NODE.width,
-    y: y + span * (index + 1),
-  };
+  const { width: w, height: h } = NODE;
+  const py = y + (h / (count + 1)) * (index + 1);
+  if (SHAPE[block.type] === "circle") {
+    // Sit on the circle itself, not on the bounding box, or the wire would end
+    // in mid-air beside a round sum block.
+    const r = Math.min(w, h) / 2;
+    const dx = Math.sqrt(Math.max(r * r - (py - y - h / 2) ** 2, 0));
+    return { x: x + w / 2 + (side === "inputs" ? -dx : dx), y: py };
+  }
+  return { x: side === "inputs" ? x : x + w, y: py };
 }
 
 /**
@@ -71,19 +132,58 @@ function positions(spec) {
 function nodePath(block) {
   const { x, y } = block._pos;
   const { width: w, height: h } = NODE;
-  const isSource = !(block._ports.inputs.length);
-  if (isSource) {
-    const skew = 10; // parallelogram, matching the Mermaid source shape
-    return svg("polygon", {
-      points: `${x + skew},${y} ${x + w},${y} ${x + w - skew},${y + h} ${x},${y + h}`,
-      class: "node-shape",
-    });
+  switch (SHAPE[block.type]) {
+    case "triangle":
+      // A gain points in the direction of signal flow, as Simulink draws it.
+      return svg("polygon", {
+        points: `${x},${y} ${x + w},${y + h / 2} ${x},${y + h}`,
+        class: "node-shape",
+      });
+    case "circle":
+      return svg("circle", {
+        cx: x + w / 2, cy: y + h / 2, r: Math.min(w, h) / 2, class: "node-shape",
+      });
+    default:
+      return svg("rect", { x, y, width: w, height: h, class: "node-shape" });
   }
-  return svg("rect", {
-    x, y, width: w, height: h,
-    rx: SAMPLED.has(block.type) ? h / 2 : 4,
-    class: "node-shape",
-  });
+}
+
+/** The face of the block: an icon, an equation, or a value. */
+function nodeIcon(block) {
+  const { x, y } = block._pos;
+  const { width: w, height: h } = NODE;
+  const g = svg("g", { class: "node-icon" });
+  const spec = icon(block);
+  const cx = SHAPE[block.type] === "triangle" ? x + w * 0.38 : x + w / 2;
+
+  if (spec.glyph) {
+    const pad = { x: w * 0.2, y: h * 0.26 };
+    const path = svg("path", {
+      d: GLYPHS[spec.glyph](w - pad.x * 2, h - pad.y * 2),
+      class: "glyph",
+      transform: `translate(${x + pad.x} ${y + pad.y})`,
+    });
+    g.appendChild(path);
+    return g;
+  }
+  if (spec.lines) {
+    spec.lines.forEach((line, i) => {
+      g.appendChild(svg("text", {
+        x: cx, y: y + h / 2 + (i - (spec.lines.length - 1) / 2) * 12 + 4,
+        class: "node-eq",
+      }, line));
+    });
+    return g;
+  }
+  if (spec.text) {
+    g.appendChild(svg("text", {
+      x: cx, y: y + h / 2 + (spec.sub ? -1 : 4), class: "node-face",
+    }, spec.text));
+    if (spec.sub) {
+      g.appendChild(svg("text", { x: cx, y: y + h / 2 + 13, class: "node-sub" }, spec.sub));
+    }
+  }
+  return g;
 }
 
 /** Convert a pointer event to diagram coordinates. */
@@ -204,6 +304,11 @@ export function renderDiagram(root, spec, ports = {}, handlers = {}) {
 
   let drawnWires = 0;
   let feedbackLanes = 0;
+  // A wired input is marked by the arrowhead, as in Simulink; its port dot would
+  // only cover the arrow up. Unwired inputs keep theirs, as the drop hint.
+  const wiredInputs = new Set(
+    spec.connections.map((c) => `${c.to[0]}.${c.to[1]}`)
+  );
   for (const conn of spec.connections) {
     const [srcName, srcPort] = conn.from;
     const [dstName, dstPort] = conn.to;
@@ -261,23 +366,40 @@ export function renderDiagram(root, spec, ports = {}, handlers = {}) {
     if (!block._pos.placed) g.setAttribute("data-auto-placed", "true");
 
     g.appendChild(nodePath(block));
+    g.appendChild(nodeIcon(block));
+    // The name sits under the block, which is where Simulink puts it — the face
+    // is for the icon.
     g.appendChild(
-      svg("text", { x: x + NODE.width / 2, y: y + 21, class: "node-name" }, block.name)
+      svg("text", {
+        x: x + NODE.width / 2, y: y + NODE.height + NODE.labelGap, class: "node-name",
+      }, block.name)
     );
-    g.appendChild(
-      svg("text", { x: x + NODE.width / 2, y: y + 37, class: "node-type" }, block.type)
-    );
+    if (SAMPLED.has(block.type)) {
+      // Inside the outline, which for a triangle means well short of its corner.
+      const tx = x + NODE.width * (SHAPE[block.type] === "triangle" ? 0.42 : 1) - 4;
+      g.appendChild(svg("text", { x: tx, y: y + 11, class: "node-ts" }, "Ts"));
+    }
 
     for (const side of ["inputs", "outputs"]) {
       const names = block._ports[side];
       names.forEach((port, i) => {
         const p = portPosition(block, side, i, names.length);
+        // A Sum block's signs are its icon, drawn beside each input port.
+        if (block.type === "Sum" && side === "inputs") {
+          const sign = (block.params?.signs || [])[i];
+          g.appendChild(svg("text", {
+            x: p.x + 11, y: p.y + 4, class: "port-sign",
+          }, sign < 0 ? "\u2212" : "+"));
+        }
         const dot = svg("circle", {
           cx: p.x, cy: p.y, r: NODE.portRadius,
           class: `port port-${side}`,
           "data-port": `${block.name}.${port}`,
           "data-side": side,
         });
+        if (side === "inputs" && wiredInputs.has(`${block.name}.${port}`)) {
+          dot.setAttribute("data-wired", "true");
+        }
         if (side === "outputs" && handlers.onConnect) {
           dot.addEventListener("pointerdown", (event) => {
             event.preventDefault();
@@ -435,7 +557,7 @@ function contentBox(spec) {
   return {
     x, y,
     w: Math.max(...xs) + NODE.width + pad - x,
-    h: Math.max(...ys) + NODE.height + pad - y,
+    h: Math.max(...ys) + NODE.height + NODE.labelGap + pad - y,
   };
 }
 
