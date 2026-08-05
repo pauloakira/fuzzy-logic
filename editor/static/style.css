@@ -165,7 +165,20 @@ aside section + section { margin-top: 1.25rem; }
   margin-top: 0.35rem;
 }
 #bode { height: 320px; }
-#pzmap { height: 300px; }
+#pzmap, #nyquist, #locus { height: 300px; }
+#nyquist, #locus {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--canvas-bg);
+  display: block;
+  margin-top: 0.35rem;
+}
+#loop-charts[hidden] { display: none; }
+/* The point the whole Nyquist criterion is about. */
+.critical-point { fill: var(--bad); stroke: none; }
+.nyquist-mirror { stroke-dasharray: 4 3; }
+.locus-design { fill: none; stroke-width: 1.6; }
 #analysis-note { color: var(--muted); font-size: 0.9em; margin: 0.5rem 0; max-width: 60ch; }
 
 #analysis-bar {

@@ -203,3 +203,79 @@ def margins(omega: ArrayLike, L: ArrayLike) -> dict[str, float | None]:
     if best:
         out["gain_margin_db"], out["phase_crossover"] = best[0], best[1]
     return out
+
+
+def _track(previous: NDArray[np.complex128], current: NDArray[np.complex128]
+           ) -> NDArray[np.complex128]:
+    """Reorder `current` so each entry continues the nearest entry of `previous`.
+
+    `eigvals` returns roots in no particular order, so joining consecutive gains
+    index-by-index draws a branch that teleports between poles. Greedy
+    nearest-neighbour matching is enough here: the gain steps are fine relative
+    to how far a root moves, and the ambiguous case — two branches meeting at a
+    breakaway point — is one where either assignment draws the same picture.
+    """
+    out = np.empty_like(current)
+    taken = np.zeros(current.size, dtype=bool)
+    for i, p in enumerate(previous):
+        d = np.abs(current - p)
+        d[taken] = np.inf
+        j = int(np.argmin(d))
+        out[i] = current[j]
+        taken[j] = True
+    return out
+
+
+def root_locus(
+    A: ArrayLike, B: ArrayLike, C: ArrayLike, D: ArrayLike, gains: ArrayLike
+) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
+    """Closed-loop poles of `1 + k L(s) = 0` as `k` sweeps (Ogata §6).
+
+    Takes `L` as the state-space `(A, B, C, D)` that `loop_transfer` returns, so
+    the poles come from an eigenvalue solve rather than from rooting a
+    polynomial — no characteristic polynomial is ever formed, and none of its
+    conditioning problems arise. Closing gain `k` around `L` gives
+
+        A_cl(k) = A - (k / (1 + k D)) B C
+
+    for a SISO loop. Returns `(gains, roots)` with `roots` shaped
+    `(len(gains), n_states)`, each **column** a continuous branch.
+
+    `k = 1` reproduces the actual closed loop and `k = 0` the open-loop poles;
+    both are asserted in the tests, since a root locus that does not pass through
+    the design point is drawing some other system.
+    """
+    A = np.atleast_2d(np.asarray(A, dtype=float))
+    n = A.shape[0]
+    b = np.asarray(B, dtype=float).reshape(n)
+    c = np.asarray(C, dtype=float).reshape(n)
+    d = float(np.asarray(D, dtype=float).reshape(-1)[0])
+    gains = np.asarray(gains, dtype=float)
+
+    roots = np.empty((gains.size, n), dtype=np.complex128)
+    previous: NDArray[np.complex128] | None = None
+    for i, k in enumerate(gains):
+        denom = 1.0 + k * d
+        if abs(denom) < 1e-12:
+            # k D = -1: the algebraic loop is singular and there is no finite
+            # closed loop at this gain. Leave a gap rather than draw through it.
+            roots[i] = np.nan
+            previous = None
+            continue
+        ev = np.asarray(np.linalg.eigvals(A - (k / denom) * np.outer(b, c)),
+                        dtype=np.complex128)
+        roots[i] = ev if previous is None else _track(previous, ev)
+        previous = roots[i]
+    return gains, roots
+
+
+def gain_sweep(k_max: float = 100.0, n: int = 200) -> NDArray[np.float64]:
+    """Gains for a root locus: 0, then log-spaced either side of the design gain.
+
+    Log-spaced because a locus moves fast near `k = 0` and slowly afterwards, and
+    `k = 1` is forced in so the drawn branch passes exactly through the loop as
+    it is actually built.
+    """
+    lo = np.logspace(-3, 0, n // 2, endpoint=False)
+    hi = np.logspace(0, np.log10(max(k_max, 1.0 + 1e-9)), n - n // 2)
+    return np.unique(np.concatenate([[0.0], lo, [1.0], hi]))

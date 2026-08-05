@@ -244,11 +244,42 @@ uses the same operating point as the closed loop, or the two would describe
 different machines — on exercise 1 the diagram's initial state is the motor's
 clamps, and `L(s)` taken there is a corner.
 
-## 9. Not done yet
+## 9. Nyquist and root locus
 
-- **Nyquist and root locus.** `L(jω)` is computed and its margins reported, but
-  neither chart is drawn yet. Nyquist is `L(jω)` on the complex plane against the
-  `-1` point and needs no new maths; root locus needs a gain sweep.
+Both are complex-plane views of the same `L(s)`, drawn with equal scale on both
+axes — the whole question in each is how close a curve comes to a point, and a
+distance that does not read true answers it wrong.
+
+**Nyquist** is `L(jω)` plotted against the `-1` point (Ogata §7-6), with the
+mirror image for negative ω drawn dashed: that is what closes the contour and
+makes an encirclement countable.
+
+**Root locus** sweeps a scalar gain `k` and plots the closed-loop poles of
+`1 + k L(s) = 0` (Ogata §6). `root_locus()` takes `L` as state space, so the
+poles come from
+
+    A_cl(k) = A - (k / (1 + k D)) B C
+
+by an eigenvalue solve. No characteristic polynomial is ever formed, and none of
+its conditioning problems arise. `k = 0` and `k = 1` are both forced into the
+sweep and marked on the chart — the branch starts at the open-loop poles and
+passes through the loop as actually built, and the tests assert both, since a
+locus that misses the design point is drawing some other system.
+
+Two details that are easy to get wrong:
+
+- **Branch continuity.** `eigvals` returns roots in no order, so joining them
+  index-by-index draws branches that teleport between poles. `_track` matches
+  each root to its nearest predecessor. The ambiguous case — two branches meeting
+  at a breakaway point — is one where either assignment draws the same picture.
+- **Clipping.** The view is scaled to the 92nd percentile of `|point|`, because
+  scaling to the maximum would crush everything that matters into one pixel when
+  a locus runs off toward infinity. So part of the curve is outside the box *by
+  construction*, and SVG does not clip on its own — without an explicit
+  `clipPath` the overflow paints across whatever sits next to the chart.
+
+## 10. Not done yet
+
 - **A closed-loop operating point from the UI.** `/api/simulate` returns the
   diagram's settled `z` under `__diagram__` and `/api/analyze` accepts it, but
   the picker's "custom" mode only edits per-block states — those cannot be

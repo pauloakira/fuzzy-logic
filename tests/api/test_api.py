@@ -335,3 +335,40 @@ def test_analyze_marks_a_genuine_lti_plant_as_not_linearized(spec):
     plant = next(s for s in body["systems"] if s["name"] == "plant")
     assert plant["linearized"] is False
     assert plant["warnings"] == []
+
+
+def test_analyze_returns_the_loop_transfer_with_its_margins(spec):
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    loop = next(s for s in body["systems"] if s["kind"] == "loop")
+    assert loop["loop_break"] == "total.y"
+    assert loop["margins"]["phase_margin_deg"] > 0
+    # this loop's phase approaches -180 without reaching it
+    assert loop["margins"]["gain_margin_db"] is None
+    assert len(loop["nyquist"]) == len(loop["omega"])
+
+
+def test_the_root_locus_passes_through_the_actual_closed_loop(spec):
+    """A locus that misses the design point is drawing a different system."""
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    loop = next(s for s in body["systems"] if s["kind"] == "loop")
+    closed = next(s for s in body["systems"] if s["kind"] == "diagram")
+
+    gains = loop["locus"]["gains"]
+    at_one = gains.index(min(gains, key=lambda g: abs(g - 1.0)))
+    drawn = sorted(
+        (b[at_one][0], b[at_one][1]) for b in loop["locus"]["branches"]
+    )
+    want = sorted((p[0], p[1]) for p in closed["poles"])
+    for (a, b), (c, d) in zip(drawn, want, strict=True):
+        assert a == pytest.approx(c, abs=1e-6) and b == pytest.approx(d, abs=1e-6)
+
+
+def test_the_root_locus_starts_at_the_open_loop_poles(spec):
+    body = client.post("/api/analyze", json={"spec": spec}).json()
+    loop = next(s for s in body["systems"] if s["kind"] == "loop")
+    plant = next(s for s in body["systems"] if s["kind"] == "block")
+    at_zero = loop["locus"]["gains"].index(0.0)
+    drawn = sorted((b[at_zero][0], b[at_zero][1]) for b in loop["locus"]["branches"])
+    want = sorted((p[0], p[1]) for p in plant["poles"])
+    for (a, b), (c, d) in zip(drawn, want, strict=True):
+        assert a == pytest.approx(c, abs=1e-6) and b == pytest.approx(d, abs=1e-6)

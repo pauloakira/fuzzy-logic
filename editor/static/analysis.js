@@ -301,3 +301,163 @@ export function renderPoleZero(root, systems, size) {
   legend(root, entries, PAD.left + 6, PAD.top + 8);
   return poleSets.length;
 }
+
+// ---- Nyquist and root locus ------------------------------------------------
+//
+// Both are complex-plane charts of the same `L(s)`, so they share the framing
+// helper below: equal scale on both axes (a distance has to read true when the
+// whole question is how close a curve comes to a point), axes through the
+// origin, and a range chosen from the data.
+
+function complexPlane(root, size, pts, extra = []) {
+  const PAD = { left: 44, right: 14, top: 14, bottom: 30 };
+  const w = size.width - PAD.left - PAD.right;
+  const h = size.height - PAD.top - PAD.bottom;
+
+  // A locus passing near a pole runs off to infinity; scaling to its maximum
+  // would crush everything that matters into one pixel. The 92nd percentile of
+  // |point| keeps the interesting region on screen, and `extra` forces the
+  // points that must be visible whatever the data does (the -1 of a Nyquist
+  // plot, the origin of a root locus).
+  const radii = pts.map(([re, im]) => Math.hypot(re, im))
+    .filter(Number.isFinite).sort((a, b) => a - b);
+  const typical = radii.length ? radii[Math.floor(radii.length * 0.92)] : 1;
+  const forced = extra.reduce((m, [re, im]) => Math.max(m, Math.hypot(re, im)), 0);
+  const r = Math.max(typical, forced, 1e-9) * 1.25;
+
+  const s = Math.min(w, h) / (2 * r);
+  const cx = PAD.left + w / 2;
+  const cy = PAD.top + h / 2;
+  const X = (re) => cx + re * s;
+  const Y = (im) => cy - im * s;
+
+  root.appendChild(svg("line", { x1: PAD.left, y1: cy, x2: PAD.left + w, y2: cy, class: "axis" }));
+  root.appendChild(svg("line", { x1: cx, y1: PAD.top, x2: cx, y2: PAD.top + h, class: "axis" }));
+
+  const step = 10 ** Math.floor(Math.log10(r));
+  for (let v = -Math.floor(r / step) * step; v <= r; v += step) {
+    if (Math.abs(v) < step / 2) continue;
+    root.appendChild(svg("text", { x: X(v), y: cy + 12, class: "tick", "text-anchor": "middle" }, nice(v)));
+    root.appendChild(svg("text", { x: cx - 5, y: Y(v) + 3.5, class: "tick", "text-anchor": "end" }, nice(v)));
+  }
+  root.appendChild(svg("text", { x: PAD.left + w, y: cy - 4, class: "tick", "text-anchor": "end" }, "Re"));
+  root.appendChild(svg("text", { x: cx + 4, y: PAD.top + 8, class: "tick", "text-anchor": "start" }, "Im"));
+
+  // The view is scaled to a percentile, so by construction some of the curve is
+  // outside it — a locus near a pole runs to infinity. SVG does not clip on its
+  // own, so without this the overflow paints across whatever sits next to the
+  // chart. The id is per-chart because two of these share one document.
+  const clip = `clip-${root.id || "plane"}`;
+  const defs = svg("defs");
+  const shape = svg("clipPath", { id: clip });
+  shape.appendChild(svg("rect", {
+    x: PAD.left, y: PAD.top, width: w, height: h,
+  }));
+  defs.appendChild(shape);
+  root.appendChild(defs);
+  return { X, Y, PAD, w, h, r, clip: `url(#${clip})` };
+}
+
+/** A polyline through complex points, breaking at any non-finite one. */
+function locusPath(pts, X, Y) {
+  let d = "", pen = false;
+  for (const [re, im] of pts) {
+    if (!Number.isFinite(re) || !Number.isFinite(im)) { pen = false; continue; }
+    d += `${pen ? "L" : "M"} ${X(re).toFixed(2)} ${Y(im).toFixed(2)} `;
+    pen = true;
+  }
+  return d.trim();
+}
+
+/**
+ * `L(jω)` on the complex plane, against the `-1` point (Ogata §7-6). Draws the
+ * mirror image for negative ω too, which is what closes the Nyquist contour and
+ * makes an encirclement countable. Returns the number of points drawn.
+ */
+export function renderNyquist(root, loop, size) {
+  root.replaceChildren();
+  size = boxOf(root, size);
+  root.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
+
+  const pts = loop?.nyquist || [];
+  if (!pts.length) {
+    emptyMessage(root, size, "no loop to open");
+    return 0;
+  }
+  const mirrored = pts.map(([re, im]) => [re, -im]);
+  const { X, Y, clip } = complexPlane(root, size, pts.concat(mirrored), [[-1, 0]]);
+
+  root.appendChild(svg("path", {
+    d: locusPath(mirrored.slice().reverse(), X, Y), "clip-path": clip,
+    class: "series nyquist-mirror", stroke: colourFor(1), "data-nyquist": "negative",
+  }));
+  root.appendChild(svg("path", {
+    d: locusPath(pts, X, Y), "clip-path": clip,
+    class: "series", stroke: colourFor(0), "data-nyquist": "positive",
+  }));
+
+  // The critical point. A Nyquist plot without it is just a curve.
+  root.appendChild(svg("circle", {
+    cx: X(-1), cy: Y(0), r: 3.5, class: "critical-point", "data-critical": "-1",
+  }));
+  root.appendChild(svg("text", {
+    x: X(-1), y: Y(0) - 8, class: "tick", "text-anchor": "middle",
+  }, "\u22121"));
+
+  legend(root, [
+    { colour: colourFor(0), label: `L(j\u03c9) @ ${loop.loop_break}` },
+    { colour: colourFor(1), label: "\u03c9 < 0 (mirror)" },
+  ], 52, 22);
+  return pts.length;
+}
+
+/**
+ * Where the closed-loop poles go as a scalar gain sweeps (Ogata §6). Each branch
+ * starts at an open-loop pole (k = 0) and the design gain k = 1 is marked, since
+ * that is the loop as actually built.
+ */
+export function renderRootLocus(root, loop, size) {
+  root.replaceChildren();
+  size = boxOf(root, size);
+  root.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
+
+  const branches = loop?.locus?.branches || [];
+  const gains = loop?.locus?.gains || [];
+  if (!branches.length) {
+    emptyMessage(root, size, "no loop to sweep");
+    return 0;
+  }
+  const all = branches.flat();
+  const { X, Y, clip } = complexPlane(root, size, all, [[0, 0]]);
+
+  const iZero = gains.indexOf(0);
+  let iOne = 0;
+  gains.forEach((g, i) => { if (Math.abs(g - 1) < Math.abs(gains[iOne] - 1)) iOne = i; });
+
+  branches.forEach((branch, j) => {
+    root.appendChild(svg("path", {
+      d: locusPath(branch, X, Y), class: "series", stroke: colourFor(j),
+      "clip-path": clip, "data-branch": String(j),
+    }));
+    if (iZero >= 0 && branch[iZero]) {
+      const [re, im] = branch[iZero];
+      root.appendChild(cross(X(re), Y(im), 5, colourFor(j), {
+        "data-locus-start": String(j), "clip-path": clip,
+      }));
+    }
+    const [re, im] = branch[iOne] || [];
+    if (Number.isFinite(re)) {
+      root.appendChild(svg("rect", {
+        x: X(re) - 3.5, y: Y(im) - 3.5, width: 7, height: 7,
+        class: "locus-design", stroke: colourFor(j), "clip-path": clip,
+        "data-locus-design": String(j),
+      }));
+    }
+  });
+
+  legend(root, [
+    { colour: "var(--muted)", label: "\u00d7 k = 0 (open loop)", marker: "pole" },
+    { colour: "var(--muted)", label: `\u25a1 k = 1 (as built)` },
+  ], 52, 22);
+  return branches.length;
+}

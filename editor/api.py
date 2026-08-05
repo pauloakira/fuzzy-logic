@@ -154,6 +154,7 @@ class AnalyzePayload(SpecPayload):
     # Break the loop here and return L(s) with its stability margins. `""`
     # disables it; `None` picks the wire feeding the first stateful block.
     loop_break: str | None = None
+    n_locus: int = Field(default=200, ge=20, le=2000)
 
 
 # ----- helpers ----------------------------------------------------------------
@@ -516,7 +517,13 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
     channel becomes one labelled curve, matching the `plant.y[i]` split the time
     plot already uses.
     """
-    from fuzzy.analysis import frequency_grid, frequency_response, margins
+    from fuzzy.analysis import (
+        frequency_grid,
+        frequency_response,
+        gain_sweep,
+        margins,
+        root_locus,
+    )
     from fuzzy.analysis import poles as _poles
     from fuzzy.analysis import zeros as _zeros
     from fuzzy.blocks import StateSpacePlant
@@ -617,8 +624,25 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
                 True, list(L.warnings), "loop",
             )
             if systems and systems[-1].get("kind") == "loop":
-                systems[-1]["margins"] = margins(grid, H)
-                systems[-1]["loop_break"] = loop_at
+                gains, roots = root_locus(
+                    L.A, L.B, L.C, L.D, gain_sweep(n=payload.n_locus)
+                )
+                systems[-1].update({
+                    "margins": margins(grid, H),
+                    "loop_break": loop_at,
+                    # L(jw) on the complex plane, for the Nyquist chart. Sent as
+                    # points rather than reconstructed from dB and degrees in the
+                    # browser, which would be a lossy round trip for no reason.
+                    "nyquist": [[float(v.real), float(v.imag)] for v in H],
+                    "locus": {
+                        "gains": gains.tolist(),
+                        # column-major: one polyline per branch
+                        "branches": [
+                            [[float(v.real), float(v.imag)] for v in roots[:, j]]
+                            for j in range(roots.shape[1])
+                        ],
+                    },
+                })
         except (LinearizationError, KeyError, ValueError, TypeError) as exc:
             systems.append({
                 "name": f"L(s) broken at {loop_at}", "omega": [], "poles": [],

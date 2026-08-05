@@ -19,7 +19,12 @@ import {
 } from "/static/canvas.js";
 import { renderFisEditor, updateSurface } from "/static/fisedit.js";
 import { colourFor, renderPlot } from "/static/plot.js";
-import { renderBode, renderPoleZero } from "/static/analysis.js";
+import {
+  renderBode,
+  renderNyquist,
+  renderPoleZero,
+  renderRootLocus,
+} from "/static/analysis.js";
 
 const api = {
   async get(path) {
@@ -729,6 +734,12 @@ function drawAnalysis() {
 
   byId("bode").dataset.systemCount = String(renderBode(byId("bode"), systems));
   byId("pzmap").dataset.systemCount = String(renderPoleZero(byId("pzmap"), systems));
+
+  byId("loop-charts").hidden = !loop;
+  if (loop) {
+    byId("nyquist").dataset.pointCount = String(renderNyquist(byId("nyquist"), loop));
+    byId("locus").dataset.branchCount = String(renderRootLocus(byId("locus"), loop));
+  }
 }
 
 async function run() {

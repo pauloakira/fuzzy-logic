@@ -277,3 +277,74 @@ def test_the_open_loop_is_not_redrawn_on_the_s_plane(page: Page, server: str):
     )
     assert not any("L(s)" in n for n in names)
     assert len(names) == 2  # the plant block and the closed loop
+
+
+# ----- Nyquist and root locus -----------------------------------------------------
+
+
+def test_the_nyquist_plot_draws_both_halves_and_the_critical_point(
+    page: Page, server: str
+):
+    """A Nyquist plot without the -1 marked is just a curve; the mirror for
+    negative omega is what closes the contour and makes an encirclement
+    countable."""
+    open_diagram(page, server, EX2)
+    run(page)
+    expect(page.locator("#nyquist [data-nyquist='positive']")).to_have_count(1)
+    expect(page.locator("#nyquist [data-nyquist='negative']")).to_have_count(1)
+    expect(page.locator("#nyquist [data-critical='-1']")).to_have_count(1)
+
+
+def test_the_root_locus_marks_where_it_starts_and_where_the_loop_sits(
+    page: Page, server: str
+):
+    """One branch per state, each starting at an open-loop pole, with the design
+    gain marked — a locus that does not say which point is the built loop leaves
+    the reader guessing."""
+    open_diagram(page, server, EX2)
+    run(page)
+    assert page.locator("#locus [data-branch]").count() == 2
+    assert page.locator("#locus [data-locus-start]").count() == 2
+    assert page.locator("#locus [data-locus-design]").count() == 2
+
+
+def test_the_locus_design_marker_sits_on_the_closed_loop_poles(page: Page, server: str):
+    """k = 1 is the loop as actually built, so its marker must land exactly on
+    the poles the closed-loop model reports."""
+    open_diagram(page, server, EX2)
+    run(page)
+    drawn = page.evaluate(
+        "() => { const s = window.__lastAnalysis.systems;"
+        " const loop = s.find(x => x.kind === 'loop');"
+        " const g = loop.locus.gains;"
+        " let i = 0;"
+        " g.forEach((v, j) => { if (Math.abs(v-1) < Math.abs(g[i]-1)) i = j; });"
+        " return loop.locus.branches.map(b => b[i]); }"
+    )
+    closed = page.evaluate(
+        "() => window.__lastAnalysis.systems.find(x => x.kind === 'diagram').poles"
+    )
+    for (re, im), (want_re, want_im) in zip(sorted(drawn), sorted(closed), strict=True):
+        assert re == pytest.approx(want_re, abs=1e-6)
+        assert im == pytest.approx(want_im, abs=1e-6)
+
+
+def test_the_loop_charts_are_hidden_without_a_loop(page: Page, server: str):
+    """Exercise 1's motor has no feedback path around it to break."""
+    open_diagram(page, server, EX1)
+    run(page, t_max="800", dt="1")
+    if page.evaluate("() => !window.__lastAnalysis.systems.some(s => s.kind==='loop')"):
+        expect(page.get_by_test_id("nyquist")).to_be_hidden()
+
+
+def test_the_complex_plane_charts_clip_to_their_own_box(page: Page, server: str):
+    """The view is scaled to a percentile, so part of the curve is outside it by
+    construction — a locus near a pole runs to infinity. SVG does not clip on its
+    own, and the overflow paints over whatever sits next to the chart."""
+    open_diagram(page, server, EX2)
+    run(page)
+    for sel in ("#nyquist [data-nyquist='positive']", "#locus [data-branch='0']"):
+        clipped = page.eval_on_selector(sel, "e => e.getAttribute('clip-path')")
+        assert clipped and clipped.startswith("url(#"), f"{sel} is not clipped"
+    assert page.locator("#nyquist clipPath").count() == 1
+    assert page.locator("#locus clipPath").count() == 1

@@ -16,8 +16,10 @@ from fuzzy.analysis import (
     faddeev_leverrier,
     frequency_grid,
     frequency_response,
+    gain_sweep,
     margins,
     poles,
+    root_locus,
     zeros,
 )
 from fuzzy.blocks import sdof_plant
@@ -114,3 +116,34 @@ def test_the_binding_margin_is_the_one_reported():
     L = 1.0 / ((1j * w) * (1j * w + 1) * (1j * w + 2))
     m = margins(w, L)
     assert 0.0 < m["gain_margin_db"] < 20.0
+
+
+# ----- root locus -----------------------------------------------------------------
+
+
+def test_the_locus_of_a_second_order_loop_moves_the_poles_left():
+    """`L = 25/(s^2+0.4s+100)`: raising `k` stiffens the loop, so the poles climb
+    the imaginary axis while their real part stays put."""
+    A = np.array([[0.0, 1.0], [-100.0, -0.4]])
+    B, C, D = np.array([0.0, 1.0]), np.array([25.0, 0.0]), 0.0
+    _, roots = root_locus(A, B, C, D, [0.0, 1.0, 4.0])
+    for row, stiffness in zip(roots, (100.0, 125.0, 200.0), strict=True):
+        want = np.roots([1.0, 0.4, stiffness])
+        assert np.allclose(np.sort_complex(row), np.sort_complex(want))
+
+
+def test_branches_are_continuous_not_index_ordered():
+    """`eigvals` returns roots in no order, so joining them index-by-index draws a
+    branch that teleports between poles."""
+    A = np.array([[0.0, 1.0], [-100.0, -0.4]])
+    _, roots = root_locus(A, [0.0, 1.0], [25.0, 0.0], 0.0, gain_sweep(n=400))
+    steps = np.abs(np.diff(roots, axis=0))
+    # no single gain step may move a root further than the whole locus spans
+    assert steps.max() < 0.5 * float(np.abs(roots).max())
+
+
+def test_the_sweep_includes_the_design_gain_and_zero():
+    g = gain_sweep(k_max=50.0, n=100)
+    assert g[0] == 0.0
+    assert 1.0 in g
+    assert g[-1] == pytest.approx(50.0)
