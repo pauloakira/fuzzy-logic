@@ -597,6 +597,10 @@ function operatingPoint() {
 
 async function refreshAnalysis() {
   if (!state.result) return;
+  // The run reports "N samples" before this fetch even starts, so anything
+  // waiting on the run status would read the charts a beat too early. This is
+  // the hook that says the analysis itself has landed.
+  byId("analysis").dataset.ready = "false";
   const body = { spec: state.spec };
   const at = operatingPoint();
   if (at) body.operating_point = at;
@@ -676,6 +680,7 @@ function drawAnalysis() {
       "(state-space) plant. These charts are defined only for an LTI plant, so a " +
       "nonlinear plant such as the motor has neither. Open a diagram with a " +
       "StateSpacePlant — the SDOF vibration exercise, for one — to see them.";
+    byId("analysis").dataset.ready = "true";
     return;
   }
   // A linearized model is only valid where the block is differentiable, and the
@@ -740,6 +745,7 @@ function drawAnalysis() {
     byId("nyquist").dataset.pointCount = String(renderNyquist(byId("nyquist"), loop));
     byId("locus").dataset.branchCount = String(renderRootLocus(byId("locus"), loop));
   }
+  byId("analysis").dataset.ready = "true";
 }
 
 async function run() {

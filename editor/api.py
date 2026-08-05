@@ -550,6 +550,7 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
         linearized: bool,
         warns: list[str],
         kind: str,
+        n: int | None = None,
     ) -> None:
         """Poles, zeros and Bode data for one `(A, B, C, D)`."""
         if not A.size or not B.size:
@@ -564,7 +565,7 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
                 chan_zeros[(i, j)] = z
                 critical.extend(z)
 
-        omega = frequency_grid(np.asarray(critical), n=payload.n_omega)
+        omega = frequency_grid(np.asarray(critical), n=n or payload.n_omega)
         H = frequency_response(A, B, C, D, omega)
         channels = []
         for i in range(n_out):
@@ -572,7 +573,7 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
                 h = H[:, i, j]
                 label = labels[i] if i < len(labels) else f"{name}.y[{i}]"
                 if n_in > 1:
-                    label += f"<-{j}"
+                    label += f"<-u[{j}]"
                 mag = np.abs(h)
                 channels.append({
                     "label": label,
@@ -616,12 +617,17 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
             )
             critical = list(_poles(L.A))
             critical.extend(_zeros(L.A, L.B[:, 0], L.C[0], L.D[0, 0]))
-            grid = frequency_grid(np.asarray(critical), n=payload.n_omega)
+            # Denser than the block charts: a Nyquist locus turns through 180
+            # degrees within a couple of percent of a lightly damped resonance,
+            # and the block grid puts about six points there, which draws the
+            # loop as a polygon. One 2x2 solve per point, so this is free.
+            n_loop = max(payload.n_omega, 2000)
+            grid = frequency_grid(np.asarray(critical), n=n_loop)
             H = frequency_response(L.A, L.B, L.C, L.D, grid)[:, 0, 0]
             emit(
                 f"L(s) broken at {loop_at}",
                 L.A, L.B, L.C, L.D, [f"L(s) @ {loop_at}"],
-                True, list(L.warnings), "loop",
+                True, list(L.warnings), "loop", n=n_loop,
             )
             if systems and systems[-1].get("kind") == "loop":
                 gains, roots = root_locus(
@@ -702,49 +708,13 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
         else:
             continue
 
-        if not A.size or not B.size:
-            continue  # nothing with dynamics to plot
-
-        n_out, n_in = C.shape[0], B.shape[1]
-        pol = _poles(A)
-
-        chan_zeros: dict[tuple[int, int], NDArray[np.complex128]] = {}
-        critical = list(pol)
-        for i in range(n_out):
-            for j in range(n_in):
-                z = _zeros(A, B[:, j], C[i], D[i, j])
-                chan_zeros[(i, j)] = z
-                critical.extend(z)
-
-        omega = frequency_grid(np.asarray(critical), n=payload.n_omega)
-        H = frequency_response(A, B, C, D, omega)
-
-        channels = []
-        for i in range(n_out):
-            for j in range(n_in):
-                h = H[:, i, j]
-                label = f"{block.name}.y[{i}]" if n_out > 1 else f"{block.name}.y"
-                if n_in > 1:
-                    label += f"<-u[{j}]"
-                # Guard log10(0); a true zero of |H| is -inf dB, which JSON and
-                # a plot both dislike, so it is floored well below any real curve.
-                mag = np.abs(h)
-                channels.append({
-                    "label": label,
-                    "mag_db": (20.0 * np.log10(np.maximum(mag, 1e-12))).tolist(),
-                    "phase_deg": np.degrees(np.unwrap(np.angle(h))).tolist(),
-                    "zeros": points(chan_zeros[(i, j)]),
-                })
-
-        systems.append({
-            "name": block.name,
-            "omega": omega.tolist(),
-            "poles": points(pol),
-            "channels": channels,
-            "linearized": linearized,
-            "warnings": warnings,
-            "kind": "block",
-        })
+        n_out = C.shape[0]
+        labels = (
+            [f"{block.name}.y[{i}]" for i in range(n_out)]
+            if n_out > 1
+            else [f"{block.name}.y"]
+        )
+        emit(block.name, A, B, C, D, labels, linearized, warnings, "block")
 
     return {"systems": systems}
 

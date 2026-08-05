@@ -29,10 +29,32 @@ def open_diagram(page: Page, server: str, path: str = EX2) -> None:
 
 
 def run(page: Page, t_max: str = "10", dt: str = "0.005") -> None:
+    """Run, then wait for the *analysis* — not the run status.
+
+    `/api/simulate` returning is not `/api/analyze` returning: the run status
+    says "N samples" before the analysis fetch has even started, so waiting on it
+    reads the charts a beat early. It passed until the loop grid got denser.
+    """
     page.get_by_test_id("t-max").fill(t_max)
     page.get_by_test_id("dt").fill(dt)
     page.get_by_test_id("run").click()
     expect(page.get_by_test_id("run-status")).to_contain_text("samples", timeout=30_000)
+    expect(page.get_by_test_id("analysis")).to_have_attribute(
+        "data-ready", "true", timeout=30_000
+    )
+
+
+def set_op_mode(page: Page, value: str) -> None:
+    """Change where to linearize, and wait for the re-analysis it kicks off.
+
+    The select fires an async `/api/analyze`; reading the charts straight after
+    `select_option` reads the previous ones.
+    """
+    page.get_by_test_id("analysis").evaluate("e => e.dataset.ready = 'false'")
+    page.get_by_test_id("op-point").select_option(value)
+    expect(page.get_by_test_id("analysis")).to_have_attribute(
+        "data-ready", "true", timeout=30_000
+    )
 
 
 def stroke_of(page: Page, selector: str) -> str:
@@ -113,7 +135,7 @@ def test_linearizing_on_a_limit_is_said_out_loud(page: Page, server: str):
     the only thing between the reader and a wrong conclusion is this warning."""
     open_diagram(page, server, EX1)
     run(page, t_max="800", dt="1")
-    page.get_by_test_id("op-point").select_option("initial")
+    set_op_mode(page, "initial")
     expect(page.get_by_test_id("analysis-warnings")).to_contain_text(
         "not differentiable"
     )
@@ -169,7 +191,7 @@ def test_the_default_operating_point_is_the_end_of_the_run(page: Page, server: s
     )
     settled = mag_top(page)
 
-    page.get_by_test_id("op-point").select_option("initial")
+    set_op_mode(page, "initial")
     expect(page.get_by_test_id("analysis-warnings")).to_contain_text(
         "not differentiable"
     )
@@ -185,7 +207,7 @@ def test_the_custom_editor_offers_blocks_not_the_synthetic_diagram_entry(
     loop would promise something the picker cannot deliver."""
     open_diagram(page, server, EX1)
     run(page, t_max="800", dt="1")
-    page.get_by_test_id("op-point").select_option("custom")
+    set_op_mode(page, "custom")
     rows = page.eval_on_selector_all(
         "[data-op-state]", "els => els.map(e => e.dataset.opState)"
     )
@@ -195,7 +217,7 @@ def test_the_custom_editor_offers_blocks_not_the_synthetic_diagram_entry(
 def test_a_typed_state_is_used(page: Page, server: str):
     open_diagram(page, server, EX1)
     run(page, t_max="800", dt="1")
-    page.get_by_test_id("op-point").select_option("custom")
+    set_op_mode(page, "custom")
     field = page.locator("[data-op-state='plant']")
     expect(field).to_be_visible()
 
@@ -209,7 +231,7 @@ def test_a_typed_state_is_used(page: Page, server: str):
 def test_a_malformed_typed_state_is_refused_not_guessed(page: Page, server: str):
     open_diagram(page, server, EX1)
     run(page, t_max="800", dt="1")
-    page.get_by_test_id("op-point").select_option("custom")
+    set_op_mode(page, "custom")
     field = page.locator("[data-op-state='plant']")
     field.fill("500")            # one number for a two-state block
     field.blur()

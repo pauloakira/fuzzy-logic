@@ -225,10 +225,17 @@ export function renderPoleZero(root, systems, size) {
   size = boxOf(root, size);
   root.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
 
-  const channels = channelsOf(systems);
-  // Every system contributes to the colour indexing, but an opened loop draws no
-  // poles: `L(s)`'s poles *are* the plant's own — that is what cutting the loop
-  // means — and a second colour at identical points reads as two pole sets.
+  // Every system contributes to the colour indexing, so a colour still means the
+  // same channel here as on the Bode plot — but the opened loop draws nothing.
+  // Its poles *are* the plant's own (that is what cutting the loop means), and
+  // its zeros belong to the loop transfer rather than to the plant or the closed
+  // loop; mixing them in claimed the plant had a zero it does not have. `L(s)`
+  // has the Nyquist and root-locus charts to itself.
+  const all_channels = channelsOf(systems);
+  const drawn = new Set(
+    (systems || []).filter((s) => s.kind !== "loop").map((s) => s.name)
+  );
+  const channels = all_channels.filter((c) => drawn.has(c.system));
   const poleSets = (systems || [])
     .filter((s) => s.kind !== "loop")
     .map((s) => ({ name: s.name, poles: s.poles || [] }));
@@ -273,7 +280,7 @@ export function renderPoleZero(root, systems, size) {
   // Poles continue the channel palette rather than reusing it, so no colour ever
   // means two things: with the closed loop and the bare plant on one map, two
   // neutral pole sets would be impossible to tell apart.
-  poleSets.forEach((g, i) => { g.colour = colourFor(channels.length + i); });
+  poleSets.forEach((g, i) => { g.colour = colourFor(all_channels.length + i); });
   for (const g of poleSets) {
     for (const [re, im] of g.poles) {
       root.appendChild(cross(X(re), Y(im), m, g.colour, { "data-pole": g.name }));
@@ -309,21 +316,27 @@ export function renderPoleZero(root, systems, size) {
 // whole question is how close a curve comes to a point), axes through the
 // origin, and a range chosen from the data.
 
-function complexPlane(root, size, pts, extra = []) {
+function complexPlane(root, size, pts, extra = [], scale = "typical") {
   const PAD = { left: 44, right: 14, top: 14, bottom: 30 };
   const w = size.width - PAD.left - PAD.right;
   const h = size.height - PAD.top - PAD.bottom;
 
-  // A locus passing near a pole runs off to infinity; scaling to its maximum
-  // would crush everything that matters into one pixel. The 92nd percentile of
-  // |point| keeps the interesting region on screen, and `extra` forces the
-  // points that must be visible whatever the data does (the -1 of a Nyquist
-  // plot, the origin of a root locus).
+  // How far out to look. A root locus runs off to infinity, so scaling to its
+  // maximum would crush everything that matters into one pixel and the 92nd
+  // percentile is the honest choice. A Nyquist locus is the opposite case: it is
+  // bounded, and its *extremes* are the whole question — how near the curve
+  // passes to -1 cannot be read from a view that leaves the peak off-screen.
   const radii = pts.map(([re, im]) => Math.hypot(re, im))
     .filter(Number.isFinite).sort((a, b) => a - b);
-  const typical = radii.length ? radii[Math.floor(radii.length * 0.92)] : 1;
+  const reach = radii.length
+    ? (scale === "full"
+        // capped, so an unbounded locus (an integrator in the loop) still shows
+        // -1 rather than collapsing the whole picture around one excursion
+        ? Math.min(radii[radii.length - 1], 10)
+        : radii[Math.floor(radii.length * 0.92)])
+    : 1;
   const forced = extra.reduce((m, [re, im]) => Math.max(m, Math.hypot(re, im)), 0);
-  const r = Math.max(typical, forced, 1e-9) * 1.25;
+  const r = Math.max(reach, forced, 1e-9) * 1.25;
 
   const s = Math.min(w, h) / (2 * r);
   const cx = PAD.left + w / 2;
@@ -385,7 +398,8 @@ export function renderNyquist(root, loop, size) {
     return 0;
   }
   const mirrored = pts.map(([re, im]) => [re, -im]);
-  const { X, Y, clip } = complexPlane(root, size, pts.concat(mirrored), [[-1, 0]]);
+  const { X, Y, clip } =
+    complexPlane(root, size, pts.concat(mirrored), [[-1, 0]], "full");
 
   root.appendChild(svg("path", {
     d: locusPath(mirrored.slice().reverse(), X, Y), "clip-path": clip,
