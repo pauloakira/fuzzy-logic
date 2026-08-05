@@ -151,6 +151,9 @@ class AnalyzePayload(SpecPayload):
     # Also linearize the diagram as a whole, keyed `__diagram__` in
     # `operating_point`. Its poles are the closed-loop poles.
     closed_loop: bool = True
+    # Break the loop here and return L(s) with its stability margins. `""`
+    # disables it; `None` picks the wire feeding the first stateful block.
+    loop_break: str | None = None
 
 
 # ----- helpers ----------------------------------------------------------------
@@ -513,11 +516,16 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
     channel becomes one labelled curve, matching the `plant.y[i]` split the time
     plot already uses.
     """
-    from fuzzy.analysis import frequency_grid, frequency_response
+    from fuzzy.analysis import frequency_grid, frequency_response, margins
     from fuzzy.analysis import poles as _poles
     from fuzzy.analysis import zeros as _zeros
     from fuzzy.blocks import StateSpacePlant
-    from fuzzy.linearize import LinearizationError, linearize, linearize_diagram
+    from fuzzy.linearize import (
+        LinearizationError,
+        linearize,
+        linearize_diagram,
+        loop_transfer,
+    )
 
     diagram = _build(payload.spec)
     systems: list[dict[str, Any]] = []
@@ -571,7 +579,54 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
             "warnings": warns, "kind": kind,
         })
 
-    # The closed loop first: its poles are the ones that say whether this
+    def default_break(d: Diagram) -> str | None:
+        """The wire feeding the first stateful block — a plant's input.
+
+        Any cut around a single loop gives the same `L(s)`, so this is a matter
+        of picking a readable one rather than a correct one.
+        """
+        for b in d.blocks:
+            if b.n_states and b.inputs:
+                src = d.connections_into(b.name)
+                if src:
+                    return src[0]
+        return None
+
+    # The open loop, with the margins that are the whole reason to compute it.
+    loop_at = payload.loop_break
+    if loop_at is None:
+        loop_at = default_break(diagram)
+    if loop_at and diagram.n_states:
+        try:
+            # The same operating point as the closed loop, or the two models
+            # describe different machines: on exercise 1 the diagram's initial
+            # state is the motor's clamps, and L(s) taken there is a corner.
+            whole = (payload.operating_point or {}).get("__diagram__")
+            L = loop_transfer(
+                diagram,
+                at=loop_at,
+                z0=None if whole is None or whole.x is None else np.asarray(whole.x),
+            )
+            critical = list(_poles(L.A))
+            critical.extend(_zeros(L.A, L.B[:, 0], L.C[0], L.D[0, 0]))
+            grid = frequency_grid(np.asarray(critical), n=payload.n_omega)
+            H = frequency_response(L.A, L.B, L.C, L.D, grid)[:, 0, 0]
+            emit(
+                f"L(s) broken at {loop_at}",
+                L.A, L.B, L.C, L.D, [f"L(s) @ {loop_at}"],
+                True, list(L.warnings), "loop",
+            )
+            if systems and systems[-1].get("kind") == "loop":
+                systems[-1]["margins"] = margins(grid, H)
+                systems[-1]["loop_break"] = loop_at
+        except (LinearizationError, KeyError, ValueError, TypeError) as exc:
+            systems.append({
+                "name": f"L(s) broken at {loop_at}", "omega": [], "poles": [],
+                "channels": [], "linearized": True, "failed": str(exc),
+                "warnings": [], "kind": "loop",
+            })
+
+    # The closed loop: its poles are the ones that say whether this
     # controller stabilizes this plant, which no per-block model can answer.
     if payload.closed_loop and diagram.n_states:
         at = (payload.operating_point or {}).get("__diagram__")

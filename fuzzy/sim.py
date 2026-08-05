@@ -285,12 +285,18 @@ class Diagram:
 
     # -- evaluation --
 
-    def _gather(self, b: Block, out: Mapping[tuple[Block, str], Any]) -> dict[str, Any]:
+    def _gather(
+        self,
+        b: Block,
+        out: Mapping[tuple[Block, str], Any],
+        cut: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         u = {}
         for p in b.inputs:
             src = self._conns[(b, p)]
             if src in out:
-                u[p] = out[src]
+                name = f"{src[0].name}.{src[1]}"
+                u[p] = cut[name] if cut is not None and name in cut else out[src]
         return u
 
     def evaluate(
@@ -298,28 +304,38 @@ class Diagram:
         t: float,
         z: NDArray[np.float64],
         inject: Mapping[str, Any] | None = None,
+        cut: Mapping[str, Any] | None = None,
     ) -> tuple[dict[tuple[Block, str], Any], dict[Block, dict[str, Any]]]:
         """Resolve every block output at `(t, z)`, then every block's inputs.
 
-        `inject` adds a perturbation to named signals (`"block.port"`) as they
-        are produced, so everything downstream sees the perturbed value. A closed
-        diagram has no free input ports — every one is wired — so this is the
-        only way to ask what happens if a signal is nudged, which is exactly what
-        `B` and `D` of a whole-diagram linearization are made of. It is the same
-        idea as a Simulink linear-analysis input point.
+        Two ways to interfere, and the difference between them is the difference
+        between a Nyquist plot and a disturbance response:
+
+        `inject` **adds** a perturbation to a named signal (`"block.port"`) as it
+        is produced, so producer and consumers alike see the perturbed value. A
+        closed diagram has no free input ports, so this is the only way to ask
+        what happens when a signal is nudged — it is what `B` and `D` of a
+        whole-diagram linearization are made of. A Simulink linear-analysis
+        *input point*.
+
+        `cut` **replaces** what the consumers of a signal receive, while the
+        block that produces it goes on producing its own value, which stays
+        readable in the returned `out`. That is a *loop opening*: the wire is
+        severed, a test signal is driven into the downstream side, and what comes
+        back around to the upstream side is the loop transfer.
         """
         order = self._finalize()
         spans = dict(self._layout())
         out: dict[tuple[Block, str], Any] = {}
         for b in order:
             x = z[spans[b]] if b in spans else np.zeros(0)
-            for port, value in b.output(t, x, self._gather(b, out)).items():
+            for port, value in b.output(t, x, self._gather(b, out, cut)).items():
                 if inject:
                     delta = inject.get(f"{b.name}.{port}")
                     if delta is not None:
                         value = np.asarray(value, dtype=float) + delta
                 out[(b, port)] = value
-        ins = {b: self._gather(b, out) for b in self._blocks}
+        ins = {b: self._gather(b, out, cut) for b in self._blocks}
         return out, ins
 
     def derivative(
@@ -327,13 +343,23 @@ class Diagram:
         t: float,
         z: NDArray[np.float64],
         inject: Mapping[str, Any] | None = None,
+        cut: Mapping[str, Any] | None = None,
     ) -> NDArray[np.float64]:
         """The whole diagram as a single ODE right-hand side."""
-        _, ins = self.evaluate(t, z, inject)
+        _, ins = self.evaluate(t, z, inject, cut)
         dz = np.zeros_like(z)
         for b, span in self._layout():
             dz[span] = np.atleast_1d(b.derivative(t, z[span], ins[b]))
         return dz
+
+    def connections_into(self, name: str) -> list[str]:
+        """The `"block.port"` signals wired into `name`'s input ports."""
+        return [
+            f"{src.name}.{port}"
+            for (b, _p), src_pair in self._conns.items()
+            if b.name == name
+            for src, port in [src_pair]
+        ]
 
     def signal_names(self) -> list[str]:
         """Every `"block.port"` output signal the diagram produces."""
@@ -356,12 +382,13 @@ class Diagram:
         t: float,
         z: NDArray[np.float64],
         inject: Mapping[str, Any] | None = None,
+        cut: Mapping[str, Any] | None = None,
     ) -> None:
         """Update every sampled block from the current continuous state."""
         sampled = [b for b in self._blocks if b.discrete]
         if not sampled:
             return
-        _, ins = self.evaluate(t, z, inject)
+        _, ins = self.evaluate(t, z, inject, cut)
         for b in sampled:
             b.update(t, ins[b])
 

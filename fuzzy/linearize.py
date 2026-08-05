@@ -498,3 +498,90 @@ def linearize_diagram(
         inputs=in_labels, outputs=out_labels,
         warnings=tuple(warnings),
     )
+
+
+def loop_transfer(
+    diagram: Any,
+    at: str,
+    z0: NDArray[np.float64] | None = None,
+    t: float = 0.0,
+) -> Linearization:
+    """The open-loop transfer `L(s)`, found by breaking the loop at signal `at`.
+
+    Ogata §2-3 defines the open-loop transfer function as the ratio of the signal
+    fed back to the actuating error. Numerically that means cutting one wire,
+    driving a test signal into the downstream side, and measuring what comes back
+    around to the upstream side (`Diagram.evaluate`'s `cut`).
+
+    Returned as `(A, B, C, D)` **already carrying the sign convention**, so
+
+        L(s) = C (sI - A)^-1 B + D      and      1 + L(s) = 0
+
+    is the closed-loop characteristic equation, which puts the critical point at
+    `-1` where Nyquist expects it. The raw measurement is `w_out/w_in`; `C` and
+    `D` are negated on the way out, because a negative-feedback loop's own
+    summing junction is what supplies that sign in the block diagram.
+
+    `A` here is the **open-loop** state matrix — the loop is cut, so its
+    eigenvalues are the plant's own poles, not the closed loop's.
+
+    Cross-check worth knowing: closing unity negative feedback around this model
+    gives `A - B C`, which must reproduce `linearize_diagram(...).A` exactly. The
+    tests assert it.
+    """
+    probe = copy.deepcopy(diagram)
+    z0 = (
+        np.asarray(probe.initial_state(), dtype=float).ravel()
+        if z0 is None
+        else np.asarray(z0, dtype=float).ravel()
+    )
+    if at not in set(probe.signal_names()):
+        raise LinearizationError(f"no signal {at!r} to break the loop at")
+
+    # The nominal test signal is whatever the wire already carries, so the cut
+    # diagram sits at the same operating point as the intact one.
+    probe.sample(t, z0)
+    out, _ = probe.evaluate(t, z0)
+    w0 = np.atleast_1d(
+        np.asarray(_named(out)[at], dtype=float)
+    ).ravel().copy()
+    template = {at: np.asarray(_named(out)[at], dtype=float)}
+
+    def measured(z: NDArray[np.float64], w: NDArray[np.float64]) -> NDArray[np.float64]:
+        cut = _rebuild(w, (at,), template)
+        probe.sample(t, z, None, cut)
+        produced, _ = probe.evaluate(t, z, None, cut)
+        return np.atleast_1d(np.asarray(_named(produced)[at], dtype=float)).ravel()
+
+    def dz(z: NDArray[np.float64], w: NDArray[np.float64]) -> NDArray[np.float64]:
+        cut = _rebuild(w, (at,), template)
+        probe.sample(t, z, None, cut)
+        return np.asarray(probe.derivative(t, z, None, cut), dtype=float).ravel()
+
+    labels = _labels((at,), (w0.size,))
+    state_labels = _labels(("z",), (z0.size,))
+    warnings: list[str] = []
+    A, corners = _jacobian(lambda z: dz(z, w0), z0, probe.n_states)
+    warnings += _corner_warnings("the opened loop's derivative", corners, state_labels)
+    B, corners = _jacobian(lambda w: dz(z0, w), w0, probe.n_states)
+    warnings += _corner_warnings("the opened loop's derivative", corners, labels)
+    C, corners = _jacobian(lambda z: measured(z, w0), z0, w0.size)
+    warnings += _corner_warnings("the loop measurement", corners, state_labels)
+    D, corners = _jacobian(lambda w: measured(z0, w), w0, w0.size)
+    warnings += _corner_warnings("the loop measurement", corners, labels)
+
+    if any(b.discrete for b in probe.blocks):
+        held = ", ".join(b.name for b in probe.blocks if b.discrete)
+        warnings.append(
+            f"{held} is sampled and held; L(s) replaces it with its continuous "
+            f"equivalent and ignores the sampling delay, so the margins below are "
+            f"optimistic by roughly the phase a dt/2 lag would add."
+        )
+
+    return Linearization(
+        block=f"{getattr(probe, 'name', 'diagram')} L(s) @ {at}",
+        A=A, B=B, C=-C, D=-D,          # 1 + L = 0, so the Nyquist point is -1
+        x0=z0, u0=w0, y0=w0,
+        inputs=labels, outputs=labels,
+        warnings=tuple(warnings),
+    )

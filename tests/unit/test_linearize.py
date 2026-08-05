@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from fuzzy.analysis import frequency_response, margins
 from fuzzy.blocks import (
     Constant,
     FISBlock,
@@ -27,6 +28,7 @@ from fuzzy.linearize import (
     equilibrium,
     linearize,
     linearize_diagram,
+    loop_transfer,
 )
 from fuzzy.sim import Diagram
 from fuzzy.spec import load
@@ -282,3 +284,88 @@ def test_the_zero_order_hold_approximation_is_declared():
 def test_a_continuous_diagram_carries_no_such_caveat():
     d, *_ = unity_feedback_loop(-25.0)
     assert linearize_diagram(d).warnings == ()
+
+
+# ----- the open loop --------------------------------------------------------------
+
+
+def named_loop(g: float) -> Diagram:
+    """The same loop as `unity_feedback_loop`, with the summing junction named so
+    a test can break the wire that leaves it."""
+    d = Diagram("loop")
+    total = Sum(("ext", "ctrl"), name="total")
+    d.connect(Harmonic(1.0, 10.0, 0.0, name="force"), (total, "ext"))
+    d.connect(total, sdof_plant(m=1.0, c=0.4, k=100.0))
+    d.connect(d.block("plant"), Select(0, name="pos"))
+    d.connect(d.block("pos"), Gain(g, name="fb"))
+    d.connect(d.block("fb"), (total, "ctrl"))
+    return d
+
+
+def test_breaking_the_loop_leaves_the_open_loop_poles():
+    """`A` with the wire cut is the plant's own, not the closed loop's — that is
+    what makes it the *open*-loop transfer."""
+    d = named_loop(-25.0)
+    lin = loop_transfer(d, at="total.y")
+    assert np.allclose(lin.A, [[0.0, 1.0], [-100.0, -0.4]])
+    assert np.allclose(np.sort_complex(lin.eigenvalues()),
+                       np.sort_complex(np.roots([1.0, 0.4, 100.0])))
+
+
+def test_closing_unity_feedback_around_l_recovers_the_closed_loop():
+    """The strongest check available: two independent paths — cut the loop and
+    close it algebraically, or never cut it — must land on the same `A`."""
+    d = named_loop(-25.0)
+    lin = loop_transfer(d, at="total.y")
+    assert np.allclose(lin.A - lin.B @ lin.C, linearize_diagram(d).A, atol=1e-6)
+
+
+def test_l_matches_the_analytic_transfer_function():
+    d = named_loop(-25.0)
+    lin = loop_transfer(d, at="total.y")
+    w = np.logspace(-1, 2, 400)
+    H = frequency_response(lin.A, lin.B, lin.C, lin.D, w)[:, 0, 0]
+    analytic = 25.0 / ((1j * w) ** 2 + 0.4 * (1j * w) + 100.0)
+    assert np.abs(H - analytic).max() < 1e-9
+
+
+def test_the_sign_convention_puts_the_critical_point_at_minus_one():
+    """`1 + L = 0` must be the closed-loop characteristic equation, or a Nyquist
+    plot is drawn against the wrong point."""
+    d = named_loop(-25.0)
+    lin = loop_transfer(d, at="total.y")
+    for pole in linearize_diagram(d).eigenvalues():
+        L_at = (lin.C @ np.linalg.solve(pole * np.eye(2) - lin.A, lin.B) + lin.D)[0, 0]
+        assert abs(1.0 + L_at) < 1e-6
+
+
+def test_the_break_point_does_not_change_l():
+    """A single loop has one loop transfer; where you cut it is bookkeeping."""
+    d = load(EX2)
+    w = np.logspace(-1, 2, 300)
+    responses = []
+    for at in ("total.y", "controller.u", "actuator.y"):
+        lin = loop_transfer(d, at=at)
+        responses.append(frequency_response(lin.A, lin.B, lin.C, lin.D, w)[:, 0, 0])
+    for other in responses[1:]:
+        assert np.abs(other - responses[0]).max() < 1e-6
+
+
+def test_the_fuzzy_loop_has_a_healthy_phase_margin():
+    d = load(EX2)
+    lin = loop_transfer(d, at="total.y")
+    w = np.logspace(-1, 3, 4000)
+    H = frequency_response(lin.A, lin.B, lin.C, lin.D, w)[:, 0, 0]
+    m = margins(w, H)
+    assert m["phase_margin_deg"] == pytest.approx(59.3, abs=0.5)
+    assert m["gain_crossover"] == pytest.approx(11.04, abs=0.1)
+
+
+def test_breaking_at_an_unknown_signal_is_refused():
+    with pytest.raises(LinearizationError, match="no signal"):
+        loop_transfer(named_loop(0.0), at="nope.y")
+
+
+def test_the_hold_approximation_is_declared_for_l_too():
+    warnings = loop_transfer(load(EX2), "total.y").warnings
+    assert any("sampling delay" in w for w in warnings)

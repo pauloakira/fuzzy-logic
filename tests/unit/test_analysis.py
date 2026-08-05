@@ -10,11 +10,13 @@ position channel is `1/k`. These are the facts the tests pin down.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from fuzzy.analysis import (
     faddeev_leverrier,
     frequency_grid,
     frequency_response,
+    margins,
     poles,
     zeros,
 )
@@ -78,3 +80,37 @@ def test_the_grid_does_not_gain_a_decade_from_rounding():
     nudged = frequency_grid([0.999999999995 + 0j], decades=2.0, n=50)
     assert nudged[0] == np.float64(exact[0])
     assert nudged[-1] == np.float64(exact[-1])
+
+
+# ----- stability margins ----------------------------------------------------------
+
+
+def test_margins_of_the_textbook_third_order_loop():
+    """`L = 1/(s(s+1)(s+2))`, whose margins are worked out in every text: the
+    phase crosses -180 deg at `sqrt(2)`, where `|L| = 1/6`."""
+    w = np.logspace(-3, 3, 40001)
+    L = 1.0 / ((1j * w) * (1j * w + 1) * (1j * w + 2))
+    m = margins(w, L)
+    assert m["phase_crossover"] == pytest.approx(np.sqrt(2), rel=1e-4)
+    assert m["gain_margin_db"] == pytest.approx(20 * np.log10(6.0), rel=1e-4)
+    assert m["phase_margin_deg"] == pytest.approx(53.41, abs=0.05)
+    assert m["gain_crossover"] == pytest.approx(0.4457, abs=1e-3)
+
+
+def test_a_margin_with_no_crossover_is_none_not_extrapolated():
+    """A second-order loop's phase approaches -180 deg without reaching it, so it
+    has no gain margin. Inventing one by running off the end of the grid would be
+    worse than saying there is none."""
+    w = np.logspace(-2, 2, 4001)
+    L = 25.0 / ((1j * w) ** 2 + 0.4 * (1j * w) + 100.0)
+    m = margins(w, L)
+    assert m["gain_margin_db"] is None and m["phase_crossover"] is None
+    assert m["phase_margin_deg"] == pytest.approx(10.29, abs=0.05)
+
+
+def test_the_binding_margin_is_the_one_reported():
+    """Several crossings are possible; the smallest is the one that constrains."""
+    w = np.logspace(-3, 3, 40001)
+    L = 1.0 / ((1j * w) * (1j * w + 1) * (1j * w + 2))
+    m = margins(w, L)
+    assert 0.0 < m["gain_margin_db"] < 20.0

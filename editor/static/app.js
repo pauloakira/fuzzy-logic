@@ -612,7 +612,7 @@ async function refreshAnalysis() {
 /** One editable state vector per linearized block, for the "custom" mode. */
 function renderCustomOperatingPoint(systems) {
   const rows = systems.filter(
-    (s) => s.linearized && !s.failed && s.kind !== "diagram"
+    (s) => s.linearized && !s.failed && s.kind === "block"
   );
   const host = byId("op-custom");
   host.hidden = state.opMode !== "custom" || !rows.length;
@@ -692,6 +692,33 @@ function drawAnalysis() {
     for (const w of s.warnings || []) notes.push(`${s.name}: ${w}`);
   }
   byId("analysis-warnings").replaceChildren(...notes.map((n) => el("li", {}, n)));
+
+  // Gain and phase margin: the reason to compute L(s) at all, and a number
+  // rather than a shape, so it belongs in text next to the curve it comes from.
+  const loop = systems.find((s) => s.kind === "loop" && s.margins);
+  const box = byId("margins");
+  box.hidden = !loop;
+  if (loop) {
+    const m = loop.margins;
+    const parts = [];
+    parts.push(m.phase_margin_deg == null
+      ? ["m-none", "phase margin: no gain crossover"]
+      : ["m-value",
+         `phase margin ${m.phase_margin_deg.toFixed(1)}\u00b0 ` +
+         `at ${m.gain_crossover.toPrecision(4)} rad/s`]);
+    parts.push(m.gain_margin_db == null
+      ? ["m-none", "gain margin: the phase never reaches \u2212180\u00b0"]
+      : ["m-value",
+         `gain margin ${m.gain_margin_db.toFixed(1)} dB ` +
+         `at ${m.phase_crossover.toPrecision(4)} rad/s`]);
+    box.replaceChildren(
+      el("span", {}, `Loop broken at ${loop.loop_break}: `),
+      ...parts.flatMap(([cls, text], i) => [
+        ...(i ? [el("span", {}, "  \u00b7  ")] : []),
+        el("span", { class: cls }, text),
+      ])
+    );
+  }
 
   const anyLinearized = systems.some((s) => s.linearized);
   byId("analysis-bar").hidden = !anyLinearized;

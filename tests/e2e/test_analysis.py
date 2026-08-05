@@ -152,6 +152,7 @@ def mag_top(page: Page) -> float:
     """The top magnitude gridline label, which tracks the model's overall gain."""
     return float(page.evaluate(
         "() => Math.max(...window.__lastAnalysis.systems"
+        ".filter(s => s.kind === 'block')"
         ".flatMap(s => s.channels).flatMap(c => c.mag_db.filter(Number.isFinite)))"
     ))
 
@@ -222,7 +223,7 @@ def test_the_closed_loop_is_charted_beside_the_bare_plant(page: Page, server: st
     run(page)
     systems = page.evaluate("() => window.__lastAnalysis.systems")
     kinds = {s["kind"]: s for s in systems}
-    assert set(kinds) == {"diagram", "block"}
+    assert set(kinds) == {"diagram", "block", "loop"}
 
     def zeta(s):
         re, im = s["poles"][0]
@@ -238,3 +239,41 @@ def test_the_closed_loop_is_charted_beside_the_bare_plant(page: Page, server: st
         "els => [...new Set(els.map(e => e.getAttribute('stroke')))]",
     )
     assert len(strokes) == 2
+
+
+def test_the_stability_margins_are_reported_as_numbers(page: Page, server: str):
+    """A margin is a number, not a shape; reading it off a curve by eye is what
+    the chart cannot do."""
+    open_diagram(page, server, EX2)
+    run(page)
+    expect(page.get_by_test_id("margins")).to_be_visible()
+    expect(page.get_by_test_id("margins")).to_contain_text("Loop broken at total.y")
+    expect(page.get_by_test_id("margins")).to_contain_text("phase margin")
+
+    # The exact value moves with the operating point — that is the feature, not
+    # a flake — so the browser pins the shape and `test_linearize.py` the number.
+    pm = page.evaluate(
+        "() => window.__lastAnalysis.systems.find(s => s.kind === 'loop')"
+        ".margins.phase_margin_deg"
+    )
+    assert 30.0 < pm < 90.0, f"implausible phase margin {pm}"
+
+
+def test_a_missing_margin_says_so_rather_than_inventing_one(page: Page, server: str):
+    """This loop's phase approaches -180 deg without reaching it, so there is no
+    gain margin to quote."""
+    open_diagram(page, server, EX2)
+    run(page)
+    expect(page.get_by_test_id("margins")).to_contain_text("never reaches")
+
+
+def test_the_open_loop_is_not_redrawn_on_the_s_plane(page: Page, server: str):
+    """`L(s)`'s poles are the plant's own — cutting the loop is what makes them
+    so — and two colours at identical points would read as two pole sets."""
+    open_diagram(page, server, EX2)
+    run(page)
+    names = page.eval_on_selector_all(
+        "#pzmap [data-pole]", "els => [...new Set(els.map(e => e.dataset.pole))]"
+    )
+    assert not any("L(s)" in n for n in names)
+    assert len(names) == 2  # the plant block and the closed loop

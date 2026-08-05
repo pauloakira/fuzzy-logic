@@ -134,3 +134,72 @@ def frequency_grid(
         lo = np.floor(np.log10(min(mags)) + snap) - decades
         hi = np.ceil(np.log10(max(mags)) - snap) + decades
     return np.logspace(lo, hi, n)
+
+
+def _cross(x: NDArray[np.float64], y: NDArray[np.float64], level: float) -> list[float]:
+    """Where `y` crosses `level`, linearly interpolated, in the units of `x`.
+
+    `x` is expected to be `log10(omega)`: a Bode grid is log-spaced, so
+    interpolating in the log is what makes a crossing between two grid points
+    land where the curve actually crosses rather than a decade off.
+    """
+    out: list[float] = []
+    d = y - level
+    for i in range(len(d) - 1):
+        a, b = d[i], d[i + 1]
+        if not np.isfinite(a) or not np.isfinite(b) or a == b:
+            continue
+        if (a <= 0.0 < b) or (b <= 0.0 < a):
+            out.append(float(x[i] + (x[i + 1] - x[i]) * (-a / (b - a))))
+    return out
+
+
+def margins(omega: ArrayLike, L: ArrayLike) -> dict[str, float | None]:
+    """Gain and phase margins of an open-loop response `L(jω)` (Ogata §7-6).
+
+    - **Phase margin** is read at the *gain* crossover, where `|L| = 1`:
+      `PM = 180° + ∠L`. How much extra lag the loop tolerates before `∠L`
+      reaches -180° with the gain still at unity.
+    - **Gain margin** is read at the *phase* crossover, where `∠L = -180°`:
+      `GM = -20 log10 |L|` dB. How much extra gain it tolerates before `|L|`
+      reaches 1 with the phase already inverted.
+
+    Either is `None` when its crossover is not on the grid — a loop whose gain
+    never reaches unity has no phase margin to report, and inventing one by
+    extrapolating past the data would be worse than saying so. When a crossover
+    happens more than once the *smallest* margin is returned, since that is the
+    one that binds.
+    """
+    omega = np.asarray(omega, dtype=float)
+    L = np.asarray(L, dtype=np.complex128)
+    lg = np.log10(omega)
+    mag_db = 20.0 * np.log10(np.maximum(np.abs(L), 1e-300))
+    phase = np.degrees(np.unwrap(np.angle(L)))
+
+    out: dict[str, float | None] = {
+        "gain_margin_db": None, "phase_crossover": None,
+        "phase_margin_deg": None, "gain_crossover": None,
+    }
+
+    # phase margin, at |L| = 1
+    best = None
+    for lw in _cross(lg, mag_db, 0.0):
+        pm = 180.0 + float(np.interp(lw, lg, phase))
+        if best is None or abs(pm) < abs(best[0]):
+            best = (pm, 10.0**lw)
+    if best:
+        out["phase_margin_deg"], out["gain_crossover"] = best[0], best[1]
+
+    # gain margin, at angle(L) = -180 deg (or any odd multiple, after unwrapping)
+    best = None
+    lo, hi = float(np.min(phase)), float(np.max(phase))
+    k = int(np.floor((lo + 180.0) / 360.0))
+    while (level := -180.0 + 360.0 * k) <= hi:
+        for lw in _cross(lg, phase, level):
+            gm = -float(np.interp(lw, lg, mag_db))
+            if best is None or abs(gm) < abs(best[0]):
+                best = (gm, 10.0**lw)
+        k += 1
+    if best:
+        out["gain_margin_db"], out["phase_crossover"] = best[0], best[1]
+    return out

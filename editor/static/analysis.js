@@ -226,9 +226,12 @@ export function renderPoleZero(root, systems, size) {
   root.setAttribute("viewBox", `0 0 ${size.width} ${size.height}`);
 
   const channels = channelsOf(systems);
-  const poleSets = (systems || []).map((s) => ({
-    name: s.name, poles: s.poles || [],
-  }));
+  // Every system contributes to the colour indexing, but an opened loop draws no
+  // poles: `L(s)`'s poles *are* the plant's own — that is what cutting the loop
+  // means — and a second colour at identical points reads as two pole sets.
+  const poleSets = (systems || [])
+    .filter((s) => s.kind !== "loop")
+    .map((s) => ({ name: s.name, poles: s.poles || [] }));
   const all = [
     ...poleSets.flatMap((s) => s.poles),
     ...channels.flatMap((c) => c.zeros || []),

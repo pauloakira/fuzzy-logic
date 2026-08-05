@@ -182,11 +182,73 @@ Cross-checked rather than assumed: the closed-loop `A` equals
 independently by `linearize()` — two different code paths agreeing to 1e-6
 (`test_a_sampled_controller_actually_closes_the_loop`).
 
-## 8. Not done yet
+## 8. The open loop — `L(s)` and the margins
 
-- **Open-loop `L(s)` by breaking the loop.** Nyquist and root locus want the
-  loop transfer, which means cutting at a chosen signal rather than injecting
-  onto it. The injection machinery in §7.1 is most of what that needs.
+Ogata §2-3 defines the open-loop transfer function as the ratio of the fed-back
+signal to the actuating error. `loop_transfer()` gets it by **cutting one wire**:
+the block that produces the signal goes on producing it, while its consumers
+receive an independent test value instead. That is a different operation from
+§7.1's injection, and the distinction is the whole point —
+
+| | what it does | what it is for |
+|---|---|---|
+| `inject` | **adds** a delta; producer and consumers both see it | disturbance response, `B` and `D` of the closed loop |
+| `cut` | **replaces** what consumers see; the producer's own value stays readable | opening the loop, `L(s)` |
+
+### 8.1 Sign convention
+
+`(A, B, C, D)` comes back with `C` and `D` already negated, so
+
+    L(s) = C (sI - A)^-1 B + D      and      1 + L(s) = 0
+
+is the closed-loop characteristic equation — which puts the critical point at
+`-1`, where Nyquist expects it. The raw measurement is `w_out/w_in`; the sign is
+what a negative-feedback summing junction contributes in the block diagram.
+
+`A` here is the **open-loop** state matrix. Its eigenvalues are the plant's own
+poles, not the closed loop's — that is what cutting the loop means, and it is why
+the s-plane chart does not redraw them in a second colour.
+
+### 8.2 What it is checked against
+
+Four independent ways, because a sign or a break point is easy to get wrong:
+
+1. `L(jω)` matches the analytic `25/(ms² + cs + k)` of a hand-built loop to
+   **1e-9**.
+2. Closing unity negative feedback algebraically, `A - B C`, reproduces
+   `linearize_diagram(...).A` **exactly** — two code paths that share nothing but
+   the diagram.
+3. `1 + L(s)` evaluates to zero at every closed-loop pole, which is the sign
+   convention stated as a test rather than a comment.
+4. Breaking at `total.y`, `controller.u` or `actuator.y` gives the **same**
+   `L(jω)` to 1e-6. A single loop has one loop transfer; where you cut is
+   bookkeeping.
+
+### 8.3 Margins
+
+`analysis.margins()` reads the two numbers `L(jω)` exists for (Ogata §7-6):
+phase margin at the gain crossover (`|L| = 1`), gain margin at the phase
+crossover (`∠L = -180°`), both interpolated in `log10(ω)` because the grid is
+log-spaced.
+
+Either is `None` when its crossover is not on the grid. The SDOF loop has no gain
+margin at all — its phase approaches `-180°` without reaching it — and reporting
+one by extrapolating past the data would be worse than saying so. Where a
+crossover happens more than once, the smallest margin is returned, since that is
+the one that binds.
+
+The margins move with the operating point, which is the feature and not a flake:
+the fuzzy loop reads **59.3°** about `z = 0` and **78.3°** about the state a 10 s
+run settles at, because the controller's local gain is different there. `L(s)`
+uses the same operating point as the closed loop, or the two would describe
+different machines — on exercise 1 the diagram's initial state is the motor's
+clamps, and `L(s)` taken there is a corner.
+
+## 9. Not done yet
+
+- **Nyquist and root locus.** `L(jω)` is computed and its margins reported, but
+  neither chart is drawn yet. Nyquist is `L(jω)` on the complex plane against the
+  `-1` point and needs no new maths; root locus needs a gain sweep.
 - **A closed-loop operating point from the UI.** `/api/simulate` returns the
   diagram's settled `z` under `__diagram__` and `/api/analyze` accepts it, but
   the picker's "custom" mode only edits per-block states — those cannot be
