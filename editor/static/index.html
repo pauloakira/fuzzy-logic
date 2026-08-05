@@ -121,8 +121,13 @@
         </div>
         <div id="op-custom" data-testid="op-custom" hidden></div>
         <p id="margins" data-testid="margins" hidden></p>
-        <details id="caveats" open>
-          <summary><span data-testid="caveat-count"></span></summary>
+        <details id="caveats">
+          <summary>
+            <span class="caveat-icon" data-testid="caveat-icon" aria-hidden="true"></span>
+            <span data-testid="caveat-count"></span>
+            <button type="button" id="copy-caveats" data-testid="copy-caveats"
+                    title="Copy these to the clipboard">Copy</button>
+          </summary>
           <ul id="analysis-warnings" data-testid="analysis-warnings"></ul>
         </details>
         <div id="analysis-charts">

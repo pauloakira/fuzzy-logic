@@ -586,23 +586,48 @@ table.rules select:hover { border-color: var(--accent); }
 
 #caveats { margin: 0.4rem 0; }
 #caveats[hidden] { display: none; }
+/* Closed by default: routine caveats should not outweigh the numbers above
+   them. The icon is what keeps a *warning* from being buried by that — an
+   inverted-i chip for notes, a triangle in the alert colour when the model was
+   taken somewhere it is not valid. */
 #caveats > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.86em;
+  font-size: 0.82em;
   list-style: none;
-  padding: 0.15rem 0;
+  padding: 0.1rem 0.45rem 0.1rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
   user-select: none;
 }
 #caveats > summary::-webkit-details-marker { display: none; }
-#caveats > summary::before {
-  content: "\25b8";
-  display: inline-block;
-  width: 1em;
-  transition: transform 0.12s ease;
+#caveats > summary:hover { color: var(--fg); border-color: var(--muted); }
+#caveats[data-severity="warning"] > summary {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
 }
-#caveats[open] > summary::before { transform: rotate(90deg); }
-#caveats > summary:hover { color: var(--fg); }
+.caveat-icon { font-size: 1.05em; line-height: 1; }
+#caveats[data-severity="warning"] .caveat-icon { font-size: 0.95em; }
+
+#copy-caveats {
+  font: inherit;
+  font-size: 0.94em;
+  color: inherit;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line);
+  padding: 0 0 0 0.4rem;
+  margin-left: 0.15rem;
+  cursor: pointer;
+  opacity: 0.75;
+}
+#copy-caveats:hover { opacity: 1; text-decoration: underline; }
+#copy-caveats[data-state="done"] { color: var(--good); opacity: 1; }
+#copy-caveats[data-state="failed"] { color: var(--bad); opacity: 1; }
 
 #analysis-warnings { margin: 0.2rem 0 0; padding-left: 1.4rem; }
 #analysis-warnings:empty { display: none; }
@@ -620,6 +645,12 @@ table.rules select:hover { border-color: var(--accent); }
   cursor: pointer;
 }
 #analysis-warnings li[data-expanded] { -webkit-line-clamp: unset; }
+#analysis-warnings li[data-severity="warning"] {
+  color: var(--fg);
+  border-left: 2px solid var(--bad);
+  padding-left: 0.45rem;
+  margin-left: -0.45rem;
+}
 #analysis-warnings li::marker { color: var(--line); }
 
 /* ===== status bar ==========================================================

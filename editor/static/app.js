@@ -82,7 +82,15 @@ const state = {
   opMode: "run",
   customOp: {},
   fisBlock: null, // name of the FISBlock whose editor is open
+  caveats: [],    // the linearization caveats, as plain text, for the clipboard
 };
+
+/**
+ * Caveats that mean the chart is *wrong* where it was taken, rather than merely
+ * approximate. Phrases, not codes, because they come from `fuzzy.linearize`'s
+ * prose — a mismatch here degrades the icon, it does not break anything.
+ */
+const SERIOUS = ["not differentiable", "cannot move", "does not respond"];
 
 // ----- palette and diagram list ----------------------------------------------
 
@@ -738,13 +746,30 @@ function drawAnalysis() {
     }
     for (const w of s.warnings || []) notes.push(`${s.name}: ${w}`);
   }
+  // Two very different things end up in this list, and collapsing them behind
+  // one neutral label would bury the one that matters. A *warning* says the
+  // model is wrong where it was taken -- a limiter is active, so the chart
+  // describes a corner. A *note* is routine bookkeeping: the block is nonlinear,
+  // the controller is sampled. The icon carries that difference so the panel can
+  // stay closed without hiding a broken chart.
+  const severe = (text) => SERIOUS.some((phrase) => text.includes(phrase));
   byId("analysis-warnings").replaceChildren(...notes.map((n) => {
     const li = el("li", { title: "click to expand" }, n);
+    if (severe(n)) li.dataset.severity = "warning";
     li.addEventListener("click", () => li.toggleAttribute("data-expanded"));
     return li;
   }));
-  byId("caveats").hidden = !notes.length;
-  set("caveat-count", notes.length === 1 ? "1 caveat" : `${notes.length} caveats`);
+
+  const caveats = byId("caveats");
+  caveats.hidden = !notes.length;
+  const bad = notes.filter(severe).length;
+  caveats.dataset.severity = bad ? "warning" : "note";
+  set("caveat-icon", bad ? "\u26a0" : "\u24d8");
+  set("caveat-count", bad
+    ? `${bad} ${bad === 1 ? "warning" : "warnings"}` +
+      (notes.length > bad ? `, ${notes.length - bad} notes` : "")
+    : `${notes.length} ${notes.length === 1 ? "note" : "notes"}`);
+  state.caveats = notes;
 
   // Gain and phase margin: the reason to compute L(s) at all, and a number
   // rather than a shape, so it belongs in text next to the curve it comes from.
@@ -898,6 +923,27 @@ function bindToolbar() {
   window.addEventListener("beforeunload", (e) => {
     if (state.dirty) e.preventDefault();
   });
+  // Copy, because these are the sentences you paste into a report or an issue,
+  // and re-typing "the opened loop's derivative is not differentiable in z[1]"
+  // is not a thing anyone should do.
+  byId("copy-caveats").addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();          // a button inside <summary> would toggle it
+    const button = e.currentTarget;
+    try {
+      await navigator.clipboard.writeText(state.caveats.join("\n\n"));
+      button.dataset.state = "done";
+      button.textContent = "Copied";
+    } catch {
+      button.dataset.state = "failed";
+      button.textContent = "Copy failed";
+    }
+    setTimeout(() => {
+      delete button.dataset.state;
+      button.textContent = "Copy";
+    }, 1600);
+  });
+
   byId("op-point").addEventListener("change", (e) => {
     state.opMode = e.target.value;
     void refreshAnalysis();

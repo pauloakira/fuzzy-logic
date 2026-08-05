@@ -370,3 +370,63 @@ def test_the_complex_plane_charts_clip_to_their_own_box(page: Page, server: str)
         assert clipped and clipped.startswith("url(#"), f"{sel} is not clipped"
     assert page.locator("#nyquist clipPath").count() == 1
     assert page.locator("#locus clipPath").count() == 1
+
+
+# ----- the caveats chip -----------------------------------------------------------
+
+
+def test_caveats_start_collapsed_behind_a_counted_chip(page: Page, server: str):
+    """Routine caveats should not outweigh the numbers above them."""
+    open_diagram(page, server, EX2)
+    run(page)
+    assert page.locator("#caveats").get_attribute("open") is None
+    expect(page.get_by_test_id("caveat-count")).to_contain_text("notes")
+    expect(page.get_by_test_id("analysis-warnings")).to_be_hidden()
+
+    page.locator("#caveats > summary").click()
+    expect(page.get_by_test_id("analysis-warnings")).to_be_visible()
+
+
+def test_a_warning_shows_through_the_closed_chip(page: Page, server: str):
+    """Collapsing is fine for `is nonlinear`; it is not fine for `the model was
+    taken on a limiter`, which means the chart is wrong. The icon carries that
+    difference so the panel can stay shut without hiding a broken chart."""
+    open_diagram(page, server, EX1)
+    run(page, t_max="800", dt="1")
+    set_op_mode(page, "initial")
+
+    expect(page.locator("#caveats")).to_have_attribute("data-severity", "warning")
+    expect(page.get_by_test_id("caveat-icon")).to_have_text("⚠")
+    expect(page.get_by_test_id("caveat-count")).to_contain_text("warning")
+
+
+def test_routine_notes_get_the_quiet_icon(page: Page, server: str):
+    open_diagram(page, server, EX2)
+    run(page)
+    expect(page.locator("#caveats")).to_have_attribute("data-severity", "note")
+    expect(page.get_by_test_id("caveat-icon")).to_have_text("ⓘ")
+
+
+def test_the_caveats_can_be_copied(page: Page, server: str):
+    """These are the sentences you paste into a report; re-typing them is not a
+    thing anyone should do."""
+    context = page.context
+    context.grant_permissions(["clipboard-read", "clipboard-write"])
+    open_diagram(page, server, EX2)
+    run(page)
+
+    page.get_by_test_id("copy-caveats").click()
+    expect(page.get_by_test_id("copy-caveats")).to_have_attribute(
+        "data-state", "done"
+    )
+    copied = page.evaluate("() => navigator.clipboard.readText()")
+    assert "sampled and held" in copied
+    assert copied.count("\n\n") == page.locator("#analysis-warnings li").count() - 1
+
+
+def test_copying_does_not_toggle_the_panel(page: Page, server: str):
+    """The button lives inside <summary>, where a click would otherwise open it."""
+    open_diagram(page, server, EX2)
+    run(page)
+    page.get_by_test_id("copy-caveats").click()
+    assert page.locator("#caveats").get_attribute("open") is None
