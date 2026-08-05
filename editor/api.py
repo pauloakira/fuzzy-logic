@@ -148,6 +148,9 @@ class AnalyzePayload(SpecPayload):
     # Per block name. A block not named here is linearized about its own initial
     # state with zero on every input.
     operating_point: dict[str, OperatingPoint] | None = None
+    # Also linearize the diagram as a whole, keyed `__diagram__` in
+    # `operating_point`. Its poles are the closed-loop poles.
+    closed_loop: bool = True
 
 
 # ----- helpers ----------------------------------------------------------------
@@ -489,6 +492,8 @@ def _operating_point(diagram: Diagram, log: Any) -> dict[str, Any]:
             for port, value in ins[by_name[name]].items()
         }
         out[name] = {"x": log.z_final[span].tolist(), "u": u}
+    # The whole state vector, for the closed-loop linearization.
+    out["__diagram__"] = {"x": log.z_final.tolist(), "u": {}}
     return out
 
 
@@ -512,13 +517,85 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
     from fuzzy.analysis import poles as _poles
     from fuzzy.analysis import zeros as _zeros
     from fuzzy.blocks import StateSpacePlant
-    from fuzzy.linearize import LinearizationError, linearize
+    from fuzzy.linearize import LinearizationError, linearize, linearize_diagram
 
     diagram = _build(payload.spec)
     systems: list[dict[str, Any]] = []
 
     def points(vals: NDArray[np.complex128]) -> list[list[float]]:
         return [[float(v.real), float(v.imag)] for v in vals]
+
+    def emit(
+        name: str,
+        A: NDArray[np.float64],
+        B: NDArray[np.float64],
+        C: NDArray[np.float64],
+        D: NDArray[np.float64],
+        labels: list[str],
+        linearized: bool,
+        warns: list[str],
+        kind: str,
+    ) -> None:
+        """Poles, zeros and Bode data for one `(A, B, C, D)`."""
+        if not A.size or not B.size:
+            return
+        n_out, n_in = C.shape[0], B.shape[1]
+        pol = _poles(A)
+        chan_zeros: dict[tuple[int, int], NDArray[np.complex128]] = {}
+        critical = list(pol)
+        for i in range(n_out):
+            for j in range(n_in):
+                z = _zeros(A, B[:, j], C[i], D[i, j])
+                chan_zeros[(i, j)] = z
+                critical.extend(z)
+
+        omega = frequency_grid(np.asarray(critical), n=payload.n_omega)
+        H = frequency_response(A, B, C, D, omega)
+        channels = []
+        for i in range(n_out):
+            for j in range(n_in):
+                h = H[:, i, j]
+                label = labels[i] if i < len(labels) else f"{name}.y[{i}]"
+                if n_in > 1:
+                    label += f"<-{j}"
+                mag = np.abs(h)
+                channels.append({
+                    "label": label,
+                    "mag_db": (20.0 * np.log10(np.maximum(mag, 1e-12))).tolist(),
+                    "phase_deg": np.degrees(np.unwrap(np.angle(h))).tolist(),
+                    "zeros": points(chan_zeros[(i, j)]),
+                })
+        systems.append({
+            "name": name, "omega": omega.tolist(), "poles": points(pol),
+            "channels": channels, "linearized": linearized,
+            "warnings": warns, "kind": kind,
+        })
+
+    # The closed loop first: its poles are the ones that say whether this
+    # controller stabilizes this plant, which no per-block model can answer.
+    if payload.closed_loop and diagram.n_states:
+        at = (payload.operating_point or {}).get("__diagram__")
+        try:
+            loop = linearize_diagram(
+                diagram,
+                z0=None if at is None or at.x is None else np.asarray(at.x),
+                outputs=[
+                    f"{b.name}.{p}"
+                    for b in diagram.blocks if b.n_states for p in b.outputs
+                ],
+            )
+            emit(
+                f"{diagram.name} (closed loop)",
+                loop.A, loop.B, loop.C, loop.D,
+                [f"{diagram.name}:{lbl}" for lbl in loop.outputs],
+                True, list(loop.warnings), "diagram",
+            )
+        except (LinearizationError, KeyError, ValueError, TypeError) as exc:
+            systems.append({
+                "name": f"{diagram.name} (closed loop)", "omega": [], "poles": [],
+                "channels": [], "linearized": True, "failed": str(exc),
+                "warnings": [], "kind": "diagram",
+            })
 
     for block in diagram.blocks:
         warnings: list[str] = []
@@ -587,6 +664,7 @@ def post_analyze(payload: AnalyzePayload) -> dict[str, Any]:
             "channels": channels,
             "linearized": linearized,
             "warnings": warnings,
+            "kind": "block",
         })
 
     return {"systems": systems}

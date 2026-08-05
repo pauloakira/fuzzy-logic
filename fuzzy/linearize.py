@@ -41,7 +41,7 @@ See `docs/implementation-linearization.md`.
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -382,3 +382,119 @@ def equilibrium(
             break
         x, residual = x_next, r_next
     return x, residual
+
+
+# ----- the whole diagram --------------------------------------------------------
+
+
+def _named(out: dict[Any, Any]) -> dict[str, Any]:
+    """`evaluate()`'s `(block, port)` keys as the `"block.port"` names used here."""
+    return {f"{b.name}.{port}": value for (b, port), value in out.items()}
+
+
+def linearize_diagram(
+    diagram: Any,
+    z0: NDArray[np.float64] | None = None,
+    t: float = 0.0,
+    inputs: Sequence[str] | None = None,
+    outputs: Sequence[str] | None = None,
+) -> Linearization:
+    """The whole diagram as one LTI model — the **closed loop**, not a block.
+
+    `A = ∂ż/∂z` over the diagram's concatenated state vector, so its eigenvalues
+    are the closed-loop poles: whether this controller stabilizes this plant, and
+    with what damping. That is the question a per-block linearization cannot
+    answer, because it has the loop cut at every wire.
+
+    A closed diagram has no free input ports — every one is wired — so `B` and
+    `D` come from *injecting* a perturbation onto a named signal (§`Diagram.
+    evaluate`). `inputs` defaults to the diagram's source signals, which is where
+    a disturbance or a reference actually enters; `outputs` defaults to every
+    signal the diagram produces.
+
+    **Sampled blocks are treated as instantaneous.** A `discrete` block's
+    `output()` returns a value held from the last control instant, so leaving it
+    alone would linearize the loop as though it were cut at the controller — the
+    poles would be the plant's, and the controller would appear to do nothing. It
+    is therefore re-sampled at every probe, which models the zero-order hold by
+    its continuous equivalent and **ignores the sampling delay**. That is the
+    standard fast-sampling approximation and it is optimistic: a real ZOH adds
+    roughly `dt/2` of phase lag, so a loop that looks marginally stable here may
+    not be. The returned `warnings` say so whenever the diagram has one.
+
+    The diagram is deep-copied first: re-sampling mutates the held values, and
+    probing a Jacobian must not disturb the caller's diagram.
+    """
+    probe = copy.deepcopy(diagram)
+    z0 = (
+        np.asarray(probe.initial_state(), dtype=float).ravel()
+        if z0 is None
+        else np.asarray(z0, dtype=float).ravel()
+    )
+    if z0.size != probe.n_states:
+        raise LinearizationError(
+            f"diagram takes {probe.n_states} states, got {z0.size}"
+        )
+
+    known = set(probe.signal_names())
+    in_names = tuple(probe.source_signals() if inputs is None else inputs)
+    out_names = tuple(probe.signal_names() if outputs is None else outputs)
+    for name in in_names + out_names:
+        if name not in known:
+            raise LinearizationError(f"no signal {name!r} in this diagram")
+
+    def evaluate(z: NDArray[np.float64], inj: dict[str, Any] | None) -> dict[str, Any]:
+        probe.sample(t, z, inj)
+        out, _ = probe.evaluate(t, z, inj)
+        return _named(out)
+
+    nominal = evaluate(z0, None)
+    zero_inj = {n: np.zeros_like(np.atleast_1d(np.asarray(nominal[n], dtype=float)))
+                for n in in_names}
+    d_vec = _flat(zero_inj, in_names)
+    in_labels = _labels(in_names, _sizes(zero_inj, in_names))
+    out_labels = _labels(out_names, _sizes(nominal, out_names))
+    y0 = _flat(nominal, out_names)
+
+    def g_of_z(z: NDArray[np.float64]) -> NDArray[np.float64]:
+        return _flat(evaluate(z, None), out_names)
+
+    def g_of_d(d: NDArray[np.float64]) -> NDArray[np.float64]:
+        return _flat(evaluate(z0, _rebuild(d, in_names, zero_inj)), out_names)
+
+    def f_of_z(z: NDArray[np.float64]) -> NDArray[np.float64]:
+        probe.sample(t, z)
+        return np.asarray(probe.derivative(t, z), dtype=float).ravel()
+
+    def f_of_d(d: NDArray[np.float64]) -> NDArray[np.float64]:
+        inj = _rebuild(d, in_names, zero_inj)
+        probe.sample(t, z0, inj)
+        return np.asarray(probe.derivative(t, z0, inj), dtype=float).ravel()
+
+    state_labels = _labels(("z",), (z0.size,))
+    warnings: list[str] = []
+    A, corners = _jacobian(f_of_z, z0, probe.n_states)
+    warnings += _corner_warnings("the diagram's derivative", corners, state_labels)
+    B, corners = _jacobian(f_of_d, d_vec, probe.n_states)
+    warnings += _corner_warnings("the diagram's derivative", corners, in_labels)
+    C, corners = _jacobian(g_of_z, z0, y0.size)
+    warnings += _corner_warnings("the diagram's outputs", corners, state_labels)
+    D, corners = _jacobian(g_of_d, d_vec, y0.size)
+    warnings += _corner_warnings("the diagram's outputs", corners, in_labels)
+
+    if any(b.discrete for b in probe.blocks):
+        held = ", ".join(b.name for b in probe.blocks if b.discrete)
+        warnings.append(
+            f"{held} is sampled and held; this model replaces it with its "
+            f"continuous equivalent and ignores the sampling delay. A real "
+            f"zero-order hold adds about dt/2 of phase lag, so these poles are "
+            f"optimistic — a loop that looks marginally stable here may not be."
+        )
+
+    return Linearization(
+        block=getattr(probe, "name", "diagram"),
+        A=A, B=B, C=C, D=D,
+        x0=z0, u0=d_vec, y0=y0,
+        inputs=in_labels, outputs=out_labels,
+        warnings=tuple(warnings),
+    )

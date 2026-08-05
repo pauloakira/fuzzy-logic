@@ -294,33 +294,74 @@ class Diagram:
         return u
 
     def evaluate(
-        self, t: float, z: NDArray[np.float64]
+        self,
+        t: float,
+        z: NDArray[np.float64],
+        inject: Mapping[str, Any] | None = None,
     ) -> tuple[dict[tuple[Block, str], Any], dict[Block, dict[str, Any]]]:
-        """Resolve every block output at `(t, z)`, then every block's inputs."""
+        """Resolve every block output at `(t, z)`, then every block's inputs.
+
+        `inject` adds a perturbation to named signals (`"block.port"`) as they
+        are produced, so everything downstream sees the perturbed value. A closed
+        diagram has no free input ports — every one is wired — so this is the
+        only way to ask what happens if a signal is nudged, which is exactly what
+        `B` and `D` of a whole-diagram linearization are made of. It is the same
+        idea as a Simulink linear-analysis input point.
+        """
         order = self._finalize()
         spans = dict(self._layout())
         out: dict[tuple[Block, str], Any] = {}
         for b in order:
             x = z[spans[b]] if b in spans else np.zeros(0)
             for port, value in b.output(t, x, self._gather(b, out)).items():
+                if inject:
+                    delta = inject.get(f"{b.name}.{port}")
+                    if delta is not None:
+                        value = np.asarray(value, dtype=float) + delta
                 out[(b, port)] = value
         ins = {b: self._gather(b, out) for b in self._blocks}
         return out, ins
 
-    def derivative(self, t: float, z: NDArray[np.float64]) -> NDArray[np.float64]:
+    def derivative(
+        self,
+        t: float,
+        z: NDArray[np.float64],
+        inject: Mapping[str, Any] | None = None,
+    ) -> NDArray[np.float64]:
         """The whole diagram as a single ODE right-hand side."""
-        _, ins = self.evaluate(t, z)
+        _, ins = self.evaluate(t, z, inject)
         dz = np.zeros_like(z)
         for b, span in self._layout():
             dz[span] = np.atleast_1d(b.derivative(t, z[span], ins[b]))
         return dz
 
-    def sample(self, t: float, z: NDArray[np.float64]) -> None:
+    def signal_names(self) -> list[str]:
+        """Every `"block.port"` output signal the diagram produces."""
+        return [f"{b.name}.{p}" for b in self._blocks for p in b.outputs]
+
+    def source_signals(self) -> list[str]:
+        """Outputs of blocks with no inputs — the diagram's exogenous signals.
+
+        These are the natural inputs of a closed loop: a disturbance or a
+        reference enters here and nowhere else.
+        """
+        return [
+            f"{b.name}.{p}"
+            for b in self._blocks if not b.inputs
+            for p in b.outputs
+        ]
+
+    def sample(
+        self,
+        t: float,
+        z: NDArray[np.float64],
+        inject: Mapping[str, Any] | None = None,
+    ) -> None:
         """Update every sampled block from the current continuous state."""
         sampled = [b for b in self._blocks if b.discrete]
         if not sampled:
             return
-        _, ins = self.evaluate(t, z)
+        _, ins = self.evaluate(t, z, inject)
         for b in sampled:
             b.update(t, ins[b])
 

@@ -137,11 +137,60 @@ caller that cares must check it.
   degeneracy detection, equilibria), `tests/api/test_api.py`,
   `tests/e2e/test_analysis.py`
 
-## 7. Not done yet
+## 7. The whole diagram — the closed loop
 
-- **Whole-diagram linearization.** Only individual blocks are linearized. The
-  closed loop — plant plus fuzzy controller plus actuator, as one `(A, B, C, D)`
-  — is what a Nyquist plot or a root locus needs, and it is the natural next
-  step now that the per-block piece exists.
+`linearize_diagram()` linearizes the diagram itself. `A = ∂ż/∂z` over the
+concatenated state vector, so its eigenvalues are the **closed-loop poles**: the
+question of whether this controller stabilizes this plant, which no per-block
+model can answer because it has the loop cut at every wire.
+
+For `ex2_sdof_fuzzy` that is the headline number of the whole project:
+
+| | ωn (rad/s) | ζ |
+|---|---|---|
+| plant alone | 9.998 | **0.020** |
+| closed loop with the fuzzy controller | 10.72 | **0.088** |
+
+Both are charted together, which is the comparison worth looking at.
+
+### 7.1 Injection, because a closed diagram has no free inputs
+
+Every input port of a wired diagram is connected, so there is nothing to
+perturb for `B` and `D`. `Diagram.evaluate` therefore takes an `inject` mapping
+that adds a delta to a named signal as it is produced, and everything downstream
+sees it. `inputs` defaults to the diagram's *source* signals — where a
+disturbance or reference actually enters. This is the same construct as a
+Simulink linear-analysis input point, and it is what a loop-breaking open-loop
+`L(s)` would be built on too.
+
+### 7.2 Sampled blocks, and the approximation that buys the closed loop
+
+A `discrete` block's `output()` returns a value held from the last control
+instant. Left alone it has no dependence on the current state at all — so the
+diagram would linearize **as though the loop were cut at the controller**, and
+report the bare plant's poles with the controller apparently inert. That is a
+silent, plausible, completely wrong answer.
+
+So sampled blocks are re-sampled at every probe, on a deep copy. That models the
+zero-order hold by its continuous equivalent and **ignores the sampling delay**.
+It is the standard fast-sampling approximation and it is *optimistic*: a real ZOH
+adds roughly `dt/2` of phase lag, so a loop that looks marginally stable here may
+not be. Every diagram with a sampled block says so in its warnings.
+
+Cross-checked rather than assumed: the closed-loop `A` equals
+`plant.A + plant.B @ D` where `D` is the fuzzy controller's local gain taken
+independently by `linearize()` — two different code paths agreeing to 1e-6
+(`test_a_sampled_controller_actually_closes_the_loop`).
+
+## 8. Not done yet
+
+- **Open-loop `L(s)` by breaking the loop.** Nyquist and root locus want the
+  loop transfer, which means cutting at a chosen signal rather than injecting
+  onto it. The injection machinery in §7.1 is most of what that needs.
+- **A closed-loop operating point from the UI.** `/api/simulate` returns the
+  diagram's settled `z` under `__diagram__` and `/api/analyze` accepts it, but
+  the picker's "custom" mode only edits per-block states — those cannot be
+  composed into the diagram's vector without knowing its layout, so the closed
+  loop falls back to its own initial state rather than guess.
 - **Trim.** `equilibrium()` solves for `x` at fixed `u`. Solving for both, subject
   to a target output, is the usual "trim" operation and is not implemented.

@@ -67,13 +67,14 @@ function legendWidth(labels) {
 }
 
 function cross(x, y, m, colour, attrs = {}) {
-  const g = svg("g", attrs);
-  g.appendChild(svg("line", {
-    x1: x - m, y1: y - m, x2: x + m, y2: y + m, class: "pz-pole", stroke: colour,
-  }));
-  g.appendChild(svg("line", {
-    x1: x - m, y1: y + m, x2: x + m, y2: y - m, class: "pz-pole", stroke: colour,
-  }));
+  // The colour goes on the group so the marker's own element carries it — a
+  // caller (or a test) reading the `data-pole` element should see its colour,
+  // not have to dig into the two strokes it inherits.
+  const g = svg("g", { ...attrs, stroke: colour });
+  const arm = (y1, y2) =>
+    svg("line", { x1: x - m, y1, x2: x + m, y2, class: "pz-pole" });
+  g.appendChild(arm(y - m, y + m));
+  g.appendChild(arm(y + m, y - m));
   return g;
 }
 
@@ -266,11 +267,13 @@ export function renderPoleZero(root, systems, size) {
   root.appendChild(svg("text", { x: cx + 4, y: PAD.top + 8, class: "tick", "text-anchor": "start" }, "Im"));
 
   const m = 5;  // marker half-size
+  // Poles continue the channel palette rather than reusing it, so no colour ever
+  // means two things: with the closed loop and the bare plant on one map, two
+  // neutral pole sets would be impossible to tell apart.
+  poleSets.forEach((g, i) => { g.colour = colourFor(channels.length + i); });
   for (const g of poleSets) {
     for (const [re, im] of g.poles) {
-      root.appendChild(
-        cross(X(re), Y(im), m, "var(--fg)", { "data-pole": g.name })
-      );
+      root.appendChild(cross(X(re), Y(im), m, g.colour, { "data-pole": g.name }));
     }
   }
   for (const c of channels) {
@@ -285,7 +288,7 @@ export function renderPoleZero(root, systems, size) {
   // Only channels that actually have a zero earn a legend row; listing the rest
   // would promise markers that are not on the map.
   const entries = poleSets.map((g) => ({
-    colour: "var(--fg)", label: `${g.name} poles`, marker: "pole",
+    colour: g.colour, label: `${g.name} poles`, marker: "pole",
   }));
   for (const c of channels) {
     if ((c.zeros || []).length) {

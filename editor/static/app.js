@@ -583,6 +583,9 @@ function operatingPoint() {
       }
     }
     return Object.keys(out).length ? out : undefined;
+    // `__diagram__` is deliberately left out: a hand-typed per-block state does
+    // not compose into the diagram's vector without knowing its layout, so the
+    // closed loop falls back to its own initial state rather than guess.
   }
   return state.result?.operating_point || undefined;
 }
@@ -608,7 +611,9 @@ async function refreshAnalysis() {
 
 /** One editable state vector per linearized block, for the "custom" mode. */
 function renderCustomOperatingPoint(systems) {
-  const rows = systems.filter((s) => s.linearized && !s.failed);
+  const rows = systems.filter(
+    (s) => s.linearized && !s.failed && s.kind !== "diagram"
+  );
   const host = byId("op-custom");
   host.hidden = state.opMode !== "custom" || !rows.length;
   if (host.hidden) return host.replaceChildren();

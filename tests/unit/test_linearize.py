@@ -18,9 +18,17 @@ from fuzzy.blocks import (
     MotorPlant,
     Saturation,
     Select,
+    StateSpacePlant,
+    Sum,
     sdof_plant,
 )
-from fuzzy.linearize import LinearizationError, equilibrium, linearize
+from fuzzy.linearize import (
+    LinearizationError,
+    equilibrium,
+    linearize,
+    linearize_diagram,
+)
+from fuzzy.sim import Diagram
 from fuzzy.spec import load
 
 EX2 = "exercises/exercicio2_sdof_vibration_control/diagram.json"
@@ -192,3 +200,85 @@ def test_an_unknown_port_is_refused():
     """Silently ignoring it would linearize about a different point than asked."""
     with pytest.raises(LinearizationError, match="no input port"):
         linearize(motor(), u0={"nope": 1.0})
+
+
+# ----- the whole diagram ----------------------------------------------------------
+
+
+def unity_feedback_loop(g: float) -> tuple[Diagram, float, float, float]:
+    """`m x'' + c x' + k x = f + g x`, so the loop shifts the stiffness to `k - g`."""
+    m, c, k = 1.0, 0.4, 100.0
+    d = Diagram("loop")
+    plant = sdof_plant(m=m, c=c, k=k)
+    total = Sum(("ext", "ctrl"))
+    d.connect(Harmonic(1.0, 10.0, 0.0, name="force"), (total, "ext"))
+    d.connect(total, plant)
+    d.connect(plant, Select(0, name="pos"))
+    d.connect(d.block("pos"), Gain(g, name="fb"))
+    d.connect(d.block("fb"), (total, "ctrl"))
+    return d, m, c, k
+
+
+def test_the_closed_loop_matrix_matches_the_hand_computed_one():
+    d, m, c, k = unity_feedback_loop(-25.0)
+    lin = linearize_diagram(d)
+    assert np.allclose(lin.A, [[0.0, 1.0], [-(k + 25.0) / m, -c / m]])
+
+
+def test_the_closed_loop_poles_are_not_the_open_loop_poles():
+    """The point of the whole exercise: a per-block linearization has the loop
+    cut at every wire and can only ever report the plant's own poles."""
+    d, m, c, k = unity_feedback_loop(-25.0)
+    closed = np.sort_complex(linearize_diagram(d).eigenvalues())
+    assert np.allclose(closed, np.sort_complex(np.roots([m, c, k + 25.0])))
+    assert not np.allclose(closed, np.sort_complex(np.roots([m, c, k])))
+
+
+def test_the_source_signal_is_the_default_input():
+    d, m, _, _ = unity_feedback_loop(-25.0)
+    lin = linearize_diagram(d)
+    assert lin.inputs == ("force.y",)
+    assert np.allclose(lin.B, [[0.0], [1.0 / m]])
+
+
+def test_an_unknown_signal_is_refused():
+    d, *_ = unity_feedback_loop(0.0)
+    with pytest.raises(LinearizationError, match="no signal"):
+        linearize_diagram(d, inputs=["nope.y"])
+
+
+def test_a_sampled_controller_actually_closes_the_loop():
+    """A `discrete` block returns a *held* output, so leaving it alone would
+    linearize the loop as though it were cut at the controller: the poles would
+    come back as the bare plant's and the controller would look inert."""
+    d = load(EX2)
+    plant = next(b for b in d.blocks if isinstance(b, StateSpacePlant))
+    lin = linearize_diagram(d)
+
+    open_loop = np.linalg.eigvals(plant.A)
+    assert not np.allclose(np.sort_complex(lin.eigenvalues()),
+                           np.sort_complex(open_loop))
+
+    # the fuzzy controller's local gain, taken independently, reproduces A
+    fis = next(b for b in d.blocks if isinstance(b, FISBlock))
+    D = linearize(fis, u0={"deslocamento": 0.0, "velocidade": 0.0}).D
+    assert np.allclose(lin.A, plant.A + plant.B @ D, atol=1e-6)
+
+
+def test_the_fuzzy_controller_adds_damping():
+    """The research claim, as a number: the loop is better damped than the plant."""
+    d = load(EX2)
+    plant = next(b for b in d.blocks if isinstance(b, StateSpacePlant))
+    zeta = lambda p: float(-np.real(p[0]) / np.abs(p[0]))  # noqa: E731
+    assert zeta(np.linalg.eigvals(plant.A)) == pytest.approx(0.02, abs=1e-3)
+    assert zeta(linearize_diagram(d).eigenvalues()) > 0.08
+
+
+def test_the_zero_order_hold_approximation_is_declared():
+    """It ignores the sampling delay, which makes the poles optimistic."""
+    assert any("sampling delay" in w for w in linearize_diagram(load(EX2)).warnings)
+
+
+def test_a_continuous_diagram_carries_no_such_caveat():
+    d, *_ = unity_feedback_loop(-25.0)
+    assert linearize_diagram(d).warnings == ()

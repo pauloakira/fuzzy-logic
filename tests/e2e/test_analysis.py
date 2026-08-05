@@ -119,12 +119,20 @@ def test_linearizing_on_a_limit_is_said_out_loud(page: Page, server: str):
     )
 
 
-def test_an_lti_plant_carries_no_linearization_caveats(page: Page, server: str):
-    """The SDOF plant is exactly linear, so there is nothing to warn about and a
-    warning would train the reader to ignore them."""
+def test_an_lti_plant_block_carries_no_caveats_but_its_loop_does(
+    page: Page, server: str
+):
+    """The SDOF plant is exactly linear. The loop around it is not — it contains a
+    sampled fuzzy controller and a saturation — so the block-level model is exact
+    while the closed-loop one rests on the fast-sampling approximation."""
     open_diagram(page, server, EX2)
     run(page)
-    expect(page.get_by_test_id("analysis-warnings").locator("li")).to_have_count(0)
+    systems = page.evaluate("() => window.__lastAnalysis.systems")
+    block = next(s for s in systems if s["kind"] == "block")
+    loop = next(s for s in systems if s["kind"] == "diagram")
+    assert block["warnings"] == []
+    assert block["linearized"] is False
+    assert any("sampling delay" in w for w in loop["warnings"])
 
 
 def test_opening_another_diagram_clears_the_analysis(page: Page, server: str):
@@ -168,11 +176,19 @@ def test_the_default_operating_point_is_the_end_of_the_run(page: Page, server: s
     assert settled - mag_top(page) == pytest.approx(20 * 0.9031, abs=0.1)
 
 
-def test_the_picker_is_hidden_when_nothing_is_linearized(page: Page, server: str):
-    """The SDOF plant is exactly linear; an operating point is meaningless."""
-    open_diagram(page, server, EX2)
-    run(page)
-    expect(page.get_by_test_id("op-point")).to_be_hidden()
+def test_the_custom_editor_offers_blocks_not_the_synthetic_diagram_entry(
+    page: Page, server: str
+):
+    """A hand-typed per-block state cannot be composed into the diagram's own
+    state vector without knowing its layout, so offering a row for the closed
+    loop would promise something the picker cannot deliver."""
+    open_diagram(page, server, EX1)
+    run(page, t_max="800", dt="1")
+    page.get_by_test_id("op-point").select_option("custom")
+    rows = page.eval_on_selector_all(
+        "[data-op-state]", "els => els.map(e => e.dataset.opState)"
+    )
+    assert rows == ["plant"]
 
 
 def test_a_typed_state_is_used(page: Page, server: str):
@@ -197,3 +213,28 @@ def test_a_malformed_typed_state_is_refused_not_guessed(page: Page, server: str)
     field.fill("500")            # one number for a two-state block
     field.blur()
     expect(field).to_have_attribute("data-invalid", "")
+
+
+def test_the_closed_loop_is_charted_beside_the_bare_plant(page: Page, server: str):
+    """The comparison that matters: the fuzzy controller more than quadruples the
+    damping, and you can only see that with both pole sets on one map."""
+    open_diagram(page, server, EX2)
+    run(page)
+    systems = page.evaluate("() => window.__lastAnalysis.systems")
+    kinds = {s["kind"]: s for s in systems}
+    assert set(kinds) == {"diagram", "block"}
+
+    def zeta(s):
+        re, im = s["poles"][0]
+        return -re / (re**2 + im**2) ** 0.5
+
+    assert zeta(kinds["block"]) == pytest.approx(0.02, abs=1e-3)
+    assert zeta(kinds["diagram"]) > 0.08
+
+    # both pole sets are on the map, and told apart by colour
+    assert page.locator("#pzmap [data-pole]").count() == 4
+    strokes = page.eval_on_selector_all(
+        "#pzmap [data-pole]",
+        "els => [...new Set(els.map(e => e.getAttribute('stroke')))]",
+    )
+    assert len(strokes) == 2
