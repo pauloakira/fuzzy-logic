@@ -71,6 +71,11 @@ const state = {
   result: null,   // the last /api/simulate response
   shown: [],      // which of its signals are plotted
   analysis: null, // the last /api/analyze response ({systems}), or null
+  // Where to linearize: "run" (the settled state of the last run), "initial"
+  // (each block's own initial state), or "custom". `customOp` holds the typed
+  // states while "custom" is selected.
+  opMode: "run",
+  customOp: {},
   fisBlock: null, // name of the FISBlock whose editor is open
 };
 
@@ -561,6 +566,78 @@ function drawResult() {
 }
 
 /**
+ * The operating point to linearize about, in the shape `/api/analyze` takes.
+ *
+ * "run" is the default because `t = 0` is a bad place to linearize and the
+ * settled state is free: `MotorPlant` starts at (0 rpm, 0 V), which is both of
+ * its lower clamps, so the Jacobian there is a corner-average with every gain
+ * halved — 18 dB of error on a plot that looks perfectly reasonable.
+ */
+function operatingPoint() {
+  if (state.opMode === "initial") return undefined;
+  if (state.opMode === "custom") {
+    const out = {};
+    for (const [name, x] of Object.entries(state.customOp)) {
+      if (Array.isArray(x) && x.every(Number.isFinite)) {
+        out[name] = { x, u: state.result?.operating_point?.[name]?.u };
+      }
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+  return state.result?.operating_point || undefined;
+}
+
+async function refreshAnalysis() {
+  if (!state.result) return;
+  const body = { spec: state.spec };
+  const at = operatingPoint();
+  if (at) body.operating_point = at;
+  try {
+    const r = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    state.analysis = r.ok ? await r.json() : null;
+  } catch {
+    state.analysis = null;
+  }
+  window.__lastAnalysis = state.analysis;
+  drawAnalysis();
+}
+
+/** One editable state vector per linearized block, for the "custom" mode. */
+function renderCustomOperatingPoint(systems) {
+  const rows = systems.filter((s) => s.linearized && !s.failed);
+  const host = byId("op-custom");
+  host.hidden = state.opMode !== "custom" || !rows.length;
+  if (host.hidden) return host.replaceChildren();
+
+  host.replaceChildren(...rows.map((s) => {
+    const current = state.customOp[s.name]
+      ?? state.result?.operating_point?.[s.name]?.x
+      ?? [];
+    const input = el("input", {
+      type: "text",
+      value: current.map((v) => Number(v.toPrecision(6))).join(", "),
+      "data-op-state": s.name,
+      "aria-label": `state of ${s.name}`,
+    });
+    input.addEventListener("change", () => {
+      const parsed = input.value.split(",").map((v) => Number(v.trim()));
+      const ok = parsed.length === current.length && parsed.every(Number.isFinite);
+      input.toggleAttribute("data-invalid", !ok);
+      if (!ok) return;
+      state.customOp[s.name] = parsed;
+      void refreshAnalysis();
+    });
+    const row = el("div", { class: "op-row" });
+    row.append(el("label", {}, `${s.name} state`), input);
+    return row;
+  }));
+}
+
+/**
  * Drop the last run and everything drawn from it.
  *
  * `#analysis` is a sibling of `#results`, not a child, so hiding the one leaves
@@ -570,6 +647,7 @@ function drawResult() {
 function clearResults() {
   state.result = null;
   state.analysis = null;
+  state.customOp = {};
   byId("results").hidden = true;
   byId("analysis").hidden = true;
 }
@@ -609,6 +687,13 @@ function drawAnalysis() {
     for (const w of s.warnings || []) notes.push(`${s.name}: ${w}`);
   }
   byId("analysis-warnings").replaceChildren(...notes.map((n) => el("li", {}, n)));
+
+  const anyLinearized = systems.some((s) => s.linearized);
+  byId("analysis-bar").hidden = !anyLinearized;
+  set("op-point-note", anyLinearized && state.opMode === "run"
+    ? `x at t = ${Number(state.result?.t?.at(-1) ?? 0).toPrecision(4)} s`
+    : "");
+  renderCustomOperatingPoint(systems);
 
   byId("bode").dataset.systemCount = String(renderBode(byId("bode"), systems));
   byId("pzmap").dataset.systemCount = String(renderPoleZero(byId("pzmap"), systems));
@@ -656,20 +741,10 @@ async function run() {
     set("run-status",
         `${state.result.n_samples} samples, showing ${state.result.returned}`);
 
-    // Linear analysis (Bode, poles/zeros) of the diagram's LTI plants. The spec
-    // just simulated, so it builds; a failure here should not sink the run, only
-    // hide the analysis panel.
-    try {
-      const a = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ spec: state.spec }),
-      });
-      state.analysis = a.ok ? await a.json() : null;
-    } catch {
-      state.analysis = null;
-    }
-    drawAnalysis();
+    // Linear analysis (Bode, poles/zeros) of the diagram's plants, about the
+    // state this run just settled at. A failure here must not sink the run.
+    state.customOp = {};
+    await refreshAnalysis();
   } catch (err) {
     byId("results").hidden = false;
     byId("run-warnings").replaceChildren(el("li", {}, err.message));
@@ -731,6 +806,11 @@ function bindToolbar() {
   window.addEventListener("beforeunload", (e) => {
     if (state.dirty) e.preventDefault();
   });
+  byId("op-point").addEventListener("change", (e) => {
+    state.opMode = e.target.value;
+    void refreshAnalysis();
+  });
+
   // The plot is fluid-width, but its viewBox is fixed at draw time. Re-draw when
   // the element resizes so the viewBox stays matched to the pixel box and the
   // tick labels never stretch — the way a Simulink scope repaints on resize.

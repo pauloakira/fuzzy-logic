@@ -168,6 +168,40 @@ aside section + section { margin-top: 1.25rem; }
 #pzmap { height: 300px; }
 #analysis-note { color: var(--muted); font-size: 0.9em; margin: 0.5rem 0; max-width: 60ch; }
 
+#analysis-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0.3rem;
+  font-size: 0.9em;
+}
+#analysis-bar[hidden], #op-custom[hidden] { display: none; }
+#analysis-bar label, #op-point-note { color: var(--muted); }
+#analysis-bar select {
+  font: inherit;
+  color: var(--fg);
+  background: var(--node-fill);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+}
+#op-custom { display: grid; gap: 0.3rem; margin-bottom: 0.4rem; font-size: 0.9em; }
+#op-custom .op-row { display: flex; align-items: center; gap: 0.5rem; }
+#op-custom label { color: var(--muted); min-width: 7rem; }
+#op-custom input {
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex: 1 1 12rem;
+  max-width: 28rem;
+  color: var(--fg);
+  background: var(--node-fill);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.15rem 0.3rem;
+}
+#op-custom input[data-invalid] { border-color: var(--bad); }
+
 /* A linearization's caveats. Not `--bad`: nothing failed, but a small-signal
    model taken on a limiter is wrong in a way the chart cannot show. */
 #analysis-warnings { margin: 0.5rem 0; padding-left: 1.1rem; }

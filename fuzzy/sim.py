@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -66,10 +66,18 @@ class WiringError(ValueError):
 
 @dataclass
 class Log:
-    """Simulation output: `t` plus every block output keyed `"<block>.<port>"`."""
+    """Simulation output: `t` plus every block output keyed `"<block>.<port>"`.
+
+    `z_final` is the diagram's state vector at the last sample. It is not a
+    signal — a block's *state* and its *output* differ whenever `C` is not the
+    identity, and `MotorPlant` clips its output — so it cannot be recovered from
+    `signals`. It is here because the settled state is the operating point worth
+    linearizing about, and it is free at the end of a run.
+    """
 
     t: NDArray[np.float64]
     signals: dict[str, NDArray[np.float64]]
+    z_final: NDArray[np.float64] = field(default_factory=lambda: np.zeros(0))
 
     def __getitem__(self, key: str) -> NDArray[np.float64]:
         if key == "t":
@@ -253,6 +261,15 @@ class Diagram:
                 out.append((b, slice(i, i + b.n_states)))
                 i += b.n_states
         return out
+
+    def state_slices(self) -> dict[str, slice]:
+        """Where each stateful block's states sit in the diagram's vector `z`.
+
+        Public because a caller holding a `Log.z_final` has no other way to say
+        which numbers belong to which block, and that is what an operating point
+        for linearization is made of.
+        """
+        return {b.name: span for b, span in self._layout()}
 
     @property
     def n_states(self) -> int:
@@ -445,7 +462,7 @@ def simulate(
         f"{b.name}.{p}": np.array([np.asarray(f[(b, p)]) for f in frames])
         for (b, p) in frames[0]
     }
-    return Log(t=times, signals=signals)
+    return Log(t=times, signals=signals, z_final=z)
 
 
 def sweep(

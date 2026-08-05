@@ -461,10 +461,35 @@ def post_simulate(payload: SimulatePayload) -> dict[str, Any]:
     return {
         "t": _decimate(log.t, payload.max_points),
         "signals": signals,
+        "operating_point": _operating_point(diagram, log),
         "n_samples": int(len(log.t)),
         "returned": len(_decimate(log.t, payload.max_points)),
         "warnings": [str(w.message) for w in caught],
     }
+
+
+def _operating_point(diagram: Diagram, log: Any) -> dict[str, Any]:
+    """Where each stateful block ended up, ready to hand to `/api/analyze`.
+
+    The settled state of a run is a far better place to linearize than `t = 0`:
+    `MotorPlant` starts at (0 rpm, 0 V), which is both of its lower clamps at
+    once, so the Jacobian there is a corner-average with every gain halved. The
+    same motor after 800 s sits at (577 rpm, 57.7 V), well inside its envelope,
+    where the linearization is exact.
+    """
+    if not log.z_final.size:
+        return {}
+    t_final = float(log.t[-1])
+    _, ins = diagram.evaluate(t_final, log.z_final)
+    by_name = {b.name: b for b in diagram.blocks}
+    out: dict[str, Any] = {}
+    for name, span in diagram.state_slices().items():
+        u = {
+            port: (value.tolist() if isinstance(value, np.ndarray) else float(value))
+            for port, value in ins[by_name[name]].items()
+        }
+        out[name] = {"x": log.z_final[span].tolist(), "u": u}
+    return out
 
 
 @app.post("/api/analyze")

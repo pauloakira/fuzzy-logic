@@ -73,14 +73,31 @@ Detected structurally rather than numerically — a state row zero in both `A` a
 states) is exempt: a `Constant` is *supposed* to have a dead output, and warning
 there would train the reader to ignore warnings.
 
-### 3.3 The default operating point is often a corner
+### 3.3 `t = 0` is the worst place to linearize, so it is not the default
 
-`MotorPlant`'s default initial state is `(0 rpm, 0 V)` — which is both lower
-clamps at once. So exercise 1 opens with a linearization taken exactly on a
-corner, and says so in three warnings. This is not a bug to paper over: it is
-the honest answer, and the fix is to pick an operating point
-(`POST /api/analyze` takes `operating_point`), not to quietly move it. With
-`x = [500, 50]` the warnings disappear and the poles come out at `-1` and `0`.
+`MotorPlant`'s initial state is `(0 rpm, 0 V)` — both lower clamps at once. The
+Jacobian there is a corner-average with `A[0,1]`, `B[1]` and every entry of `C`
+at exactly half their true value, compounding to **1/8** on the speed channel
+and **1/4** on the voltage channel: 18.06 dB and 12.04 dB of pure error on a
+plot whose shape, phase, poles and zeros are all perfectly correct. Nothing
+about the chart looks wrong.
+
+So the editor linearizes about **the state at the end of the last run** by
+default. It is free — `Log.z_final` falls out of the integration — and it is
+almost always the meaningful operating point: the same motor after 800 s sits at
+`(577.2 rpm, 57.7 V)`, well inside its envelope, where the model is exact and
+the magnitudes come out at the correct 60 dB and 40 dB.
+
+The picker above the charts offers the other two: each block's initial state
+(the old behaviour, useful for seeing exactly this failure), and a state typed
+by hand. `POST /api/analyze` takes the same thing as `operating_point`, and
+`POST /api/simulate` returns one ready to forward.
+
+**A related trap, found while wiring this up.** `frequency_grid` rounds out to
+enclosing decades with `floor(log10(·))`. A numerical Jacobian returns a pole of
+1 as `0.999999999995`, whose `log10` is `-2e-12`, and `floor` of that is `-1`
+rather than `0` — so the exact model and the linearized one plotted the same
+system over ranges a decade apart. Fixed by nudging before rounding.
 
 ## 4. Sampled blocks and the fuzzy controller's local gain
 
@@ -126,9 +143,5 @@ caller that cares must check it.
   closed loop — plant plus fuzzy controller plus actuator, as one `(A, B, C, D)`
   — is what a Nyquist plot or a root locus needs, and it is the natural next
   step now that the per-block piece exists.
-- **Choosing the operating point from the UI.** The API takes
-  `operating_point`; the editor always sends the default. A picker (or "use the
-  state at `t = T` from the last run") would make §3.3 a two-click fix instead of
-  a curl command.
 - **Trim.** `equilibrium()` solves for `x` at fixed `u`. Solving for both, subject
   to a target output, is the usual "trim" operation and is not implemented.

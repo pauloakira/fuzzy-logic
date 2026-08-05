@@ -95,6 +95,16 @@
 
       <section id="analysis" data-testid="analysis" hidden>
         <p id="analysis-note" data-testid="analysis-note" hidden></p>
+        <div id="analysis-bar" hidden>
+          <label for="op-point">Linearize about</label>
+          <select id="op-point" data-testid="op-point">
+            <option value="run">the end of the last run</option>
+            <option value="initial">each block's initial state</option>
+            <option value="custom">a state I type</option>
+          </select>
+          <span id="op-point-note" data-testid="op-point-note"></span>
+        </div>
+        <div id="op-custom" data-testid="op-custom" hidden></div>
         <ul id="analysis-warnings" data-testid="analysis-warnings"></ul>
         <div id="analysis-charts">
           <h2>Frequency response</h2>

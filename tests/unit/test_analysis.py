@@ -68,3 +68,13 @@ def test_frequency_grid_brackets_the_natural_frequency():
 def test_frequency_grid_falls_back_without_finite_criticals():
     grid = frequency_grid([0.0, 0.0], n=10)
     assert np.isclose(grid[0], 1e-2) and np.isclose(grid[-1], 1e2)
+
+
+def test_the_grid_does_not_gain_a_decade_from_rounding():
+    """A numerical Jacobian returns a pole of 1 as 0.999999999995, whose log10 is
+    a hair negative; `floor` then reaches a decade further than for the exact
+    model, and the same system plots over two different ranges."""
+    exact = frequency_grid([1.0 + 0j], decades=2.0, n=50)
+    nudged = frequency_grid([0.999999999995 + 0j], decades=2.0, n=50)
+    assert nudged[0] == np.float64(exact[0])
+    assert nudged[-1] == np.float64(exact[-1])

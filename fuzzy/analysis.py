@@ -126,6 +126,11 @@ def frequency_grid(
     if not mags:
         lo, hi = -2.0, 2.0
     else:
-        lo = np.floor(np.log10(min(mags))) - decades
-        hi = np.ceil(np.log10(max(mags))) + decades
+        # Nudge before rounding out to the enclosing decades. A pole at exactly 1
+        # comes back from a numerical Jacobian as 0.999999999995, whose log10 is
+        # -2e-12, and `floor` of that is -1 rather than 0 — so an exact model and
+        # a linearized one plot the same system over ranges a decade apart.
+        snap = 1e-9
+        lo = np.floor(np.log10(min(mags)) + snap) - decades
+        hi = np.ceil(np.log10(max(mags)) - snap) + decades
     return np.logspace(lo, hi, n)
