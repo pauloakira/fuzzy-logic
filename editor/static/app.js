@@ -122,14 +122,37 @@ async function loadDiagramList() {
   const list = byId("diagrams");
   list.replaceChildren();
   for (const path of diagrams) {
-    const button = el("button", { type: "button", "data-diagram-path": path }, path);
+    // The row shows the exercise, not the whole path: a wrapped
+    // `exercises/exercicio2_sdof_vibration_control/diagram.json` is three lines
+    // of mostly-shared prefix. The full path stays in the tooltip.
+    const parts = path.split("/");
+    const label = parts.length > 1 ? parts[parts.length - 2] : path;
+    const button = el(
+      "button", { type: "button", "data-diagram-path": path, title: path }, label
+    );
     button.addEventListener("click", () => openDiagram(path));
+
     list.appendChild(el("li")).appendChild(button);
   }
   return diagrams;
 }
 
 // ----- editing ----------------------------------------------------------------
+
+/** The status bar: the model's vital statistics, always on screen. */
+function drawStatusBar(summary) {
+  const bar = byId("statusbar");
+  if (!summary) return void (bar.hidden = true);
+  bar.hidden = false;
+  set("status-name", state.path || "");
+  set("status-shape",
+      `${summary.blocks} blocks \u00b7 ${summary.connections} connections ` +
+      `\u00b7 ${summary.states} states`);
+  const ok = !summary.problems?.length;
+  const validity = document.querySelector('[data-testid="status-validity"]');
+  validity.textContent = ok ? "valid" : `${summary.problems.length} problems`;
+  validity.dataset.valid = String(ok);
+}
 
 function markDirty(dirty = true) {
   state.dirty = dirty;
@@ -343,6 +366,13 @@ async function refresh() {
     validity.dataset.ok = "false";
     validity.dataset.block = first.block || "";
   }
+  drawStatusBar({
+    blocks: state.spec.blocks.length,
+    connections: state.spec.connections.length,
+    states: report.n_states ?? 0,
+    problems: report.problems || [],
+  });
+
   // Structured problem references exist so the canvas can point at the offending
   // node rather than describe it.
   highlightProblems(canvas, report.problems || []);
@@ -368,6 +398,12 @@ async function openDiagram(path) {
     byId("save-path").value = path.replace(/\.json$/, ".draft.json");
     set("save-status", "");
     byId("canvas-empty").hidden = true;
+    for (const b of document.querySelectorAll("[data-diagram-path]")) {
+      // `toggleAttribute` would set `aria-current=""`, which is not a valid
+      // value and matches no attribute-value selector; ARIA wants "page".
+      if (b.dataset.diagramPath === path) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+    }
     delete byId("canvas").dataset.userView;  // frame each diagram when opened
     state.shown = [];
     state.fisBlock = null;
@@ -383,6 +419,7 @@ async function openDiagram(path) {
     byId("canvas-empty").textContent =
       err.block ? `${err.message} (block: ${err.block})` : err.message;
     byId("summary").hidden = true;
+    drawStatusBar(null);
     byId("toolbar").hidden = true;
     byId("runbar").hidden = true;
     clearResults();
@@ -701,7 +738,13 @@ function drawAnalysis() {
     }
     for (const w of s.warnings || []) notes.push(`${s.name}: ${w}`);
   }
-  byId("analysis-warnings").replaceChildren(...notes.map((n) => el("li", {}, n)));
+  byId("analysis-warnings").replaceChildren(...notes.map((n) => {
+    const li = el("li", { title: "click to expand" }, n);
+    li.addEventListener("click", () => li.toggleAttribute("data-expanded"));
+    return li;
+  }));
+  byId("caveats").hidden = !notes.length;
+  set("caveat-count", notes.length === 1 ? "1 caveat" : `${notes.length} caveats`);
 
   // Gain and phase margin: the reason to compute L(s) at all, and a number
   // rather than a shape, so it belongs in text next to the curve it comes from.

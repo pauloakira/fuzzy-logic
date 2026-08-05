@@ -45,37 +45,52 @@
     <section id="canvas-panel">
       <h2>Canvas</h2>
       <div id="toolbar" data-testid="toolbar" hidden>
-        <label>Add
-          <select id="add-block" data-testid="add-block"></select>
-        </label>
-        <button type="button" id="delete-selected" data-testid="delete-selected"
-                disabled>Delete selected</button>
-        <span id="dirty" data-testid="dirty" hidden>unsaved changes</span>
-        <span class="spacer"></span>
-        <label>Save to
-          <input type="text" id="save-path" data-testid="save-path" size="34">
-        </label>
-        <button type="button" id="save" data-testid="save">Save</button>
-        <span id="save-status" data-testid="save-status"></span>
+        <div class="ts-group">
+          <span class="ts-label">Edit</span>
+          <div class="ts-controls">
+            <select id="add-block" data-testid="add-block"></select>
+            <button type="button" id="delete-selected" data-testid="delete-selected"
+                    disabled>Delete</button>
+          </div>
+        </div>
+        <div class="ts-group">
+          <span class="ts-label">File</span>
+          <div class="ts-controls">
+            <input type="text" id="save-path" data-testid="save-path" size="30">
+            <button type="button" id="save" data-testid="save">Save</button>
+            <span id="save-status" data-testid="save-status"></span>
+            <span id="dirty" data-testid="dirty" hidden>unsaved</span>
+          </div>
+        </div>
       </div>
 
       <div id="runbar" data-testid="runbar" hidden>
-        <label>t_max <input type="number" id="t-max" data-testid="t-max"
-                            value="40" min="0.001" step="any" size="6"></label>
-        <label>dt <input type="number" id="dt" data-testid="dt"
-                         value="0.005" min="0.000001" step="any" size="8"></label>
-        <button type="button" id="run" data-testid="run">Run</button>
-        <span id="run-status" data-testid="run-status"></span>
-        <span class="spacer"></span>
-        <span class="zoom-controls">
-          <button type="button" id="zoom-out" data-testid="zoom-out"
-                  title="Zoom out (−)">−</button>
-          <span id="zoom-level" data-testid="zoom-level">100%</span>
-          <button type="button" id="zoom-in" data-testid="zoom-in"
-                  title="Zoom in (+)">+</button>
-          <button type="button" id="zoom-fit" data-testid="zoom-fit"
-                  title="Fit to view (0)">Fit</button>
-        </span>
+        <div class="ts-group">
+          <span class="ts-label">Simulate</span>
+          <div class="ts-controls">
+            <label for="t-max">stop</label>
+            <input type="number" id="t-max" data-testid="t-max"
+                   value="40" min="0.001" step="any">
+            <label for="dt">step</label>
+            <input type="number" id="dt" data-testid="dt"
+                   value="0.005" min="0.000001" step="any">
+            <button type="button" id="run" data-testid="run" class="primary">
+              Run</button>
+            <span id="run-status" data-testid="run-status"></span>
+          </div>
+        </div>
+        <div class="ts-group">
+          <span class="ts-label">View</span>
+          <div class="ts-controls zoom-controls">
+            <button type="button" id="zoom-out" data-testid="zoom-out"
+                    title="Zoom out (−)">−</button>
+            <span id="zoom-level" data-testid="zoom-level">100%</span>
+            <button type="button" id="zoom-in" data-testid="zoom-in"
+                    title="Zoom in (+)">+</button>
+            <button type="button" id="zoom-fit" data-testid="zoom-fit"
+                    title="Fit to view (0)">Fit</button>
+          </div>
+        </div>
       </div>
       <svg id="canvas" data-testid="canvas" role="img"
            aria-label="Block diagram"></svg>
@@ -106,7 +121,10 @@
         </div>
         <div id="op-custom" data-testid="op-custom" hidden></div>
         <p id="margins" data-testid="margins" hidden></p>
-        <ul id="analysis-warnings" data-testid="analysis-warnings"></ul>
+        <details id="caveats" open>
+          <summary><span data-testid="caveat-count"></span></summary>
+          <ul id="analysis-warnings" data-testid="analysis-warnings"></ul>
+        </details>
         <div id="analysis-charts">
           <h2>Frequency response</h2>
           <svg id="bode" data-testid="bode" role="img" aria-label="Bode plot"></svg>
@@ -124,6 +142,13 @@
       </section>
     </section>
   </main>
+
+  <footer id="statusbar" data-testid="statusbar" hidden>
+    <span data-testid="status-name"></span>
+    <span data-testid="status-shape"></span>
+    <span class="spacer"></span>
+    <span data-testid="status-validity"></span>
+  </footer>
 
   <script type="module" src="/static/app.js"></script>
 </body>

@@ -12,6 +12,13 @@
      drawing; a pale outline reads as a mockup rather than a model. */
   --node-line: #22262b;
   --wire: #3f444b;
+  /* Surfaces. Simulink's chrome is a stack of flat greys a shade apart —
+     panel face, panel header, the canvas well — with one blue accent. */
+  --panel: #ffffff;
+  --panel-header: #f4f5f7;
+  --well: #eceef1;
+  --shadow: 0 1px 2px rgba(16, 20, 26, 0.06);
+  --radius: 5px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -24,6 +31,10 @@
     --node-fill: #1d2026;
     --node-line: #c3c8d0;
     --wire: #aab0b8;
+    --panel: #1a1d22;
+    --panel-header: #22262c;
+    --well: #0c0e11;
+    --shadow: none;
   }
 }
 
@@ -31,39 +42,69 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--well);
   color: var(--fg);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 header {
   display: flex;
   align-items: baseline;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
+  gap: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--panel-header);
   border-bottom: 1px solid var(--line);
 }
 
-h1 { font-size: 1.1rem; margin: 0; }
-h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
-     color: var(--muted); margin: 0 0 0.5rem; }
-h3 { font-size: 1rem; margin: 0 0 0.25rem; }
+h1 { font-size: 0.95rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+/* A panel title bar, not a floating caption: h2 is the header strip of the
+   card it opens, the way a docked Simulink pane is titled. */
+h2 {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 0;
+  padding: 0.42rem 0.7rem;
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+h3 { font-size: 0.9rem; font-weight: 600; margin: 0 0 0.2rem; }
 
 #status { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 main {
   display: grid;
-  grid-template-columns: minmax(15rem, 20rem) 1fr;
-  gap: 1.5rem;
-  padding: 1rem;
+  grid-template-columns: minmax(14rem, 18rem) 1fr;
+  gap: 0.75rem;
+  padding: 0.75rem;
   align-items: start;
 }
+
+/* Every section is a docked panel: a titled card on the well behind it. */
+aside > section,
+#canvas-panel > section,
+#canvas-panel > .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+aside > section > :not(h2),
+#canvas-panel > section > :not(h2) { margin-left: 0.7rem; margin-right: 0.7rem; }
+aside > section > :not(h2):last-child,
+#canvas-panel > section > :not(h2):last-child { margin-bottom: 0.7rem; }
+aside > section > h2 + *,
+#canvas-panel > section > h2 + * { margin-top: 0.7rem; }
 
 @media (max-width: 48rem) {
   main { grid-template-columns: 1fr; }
 }
 
-aside section + section { margin-top: 1.25rem; }
+aside section + section { margin-top: 0.75rem; }
 
 #canvas-panel { min-width: 0; }  /* let the SVG shrink inside the grid track */
 
@@ -97,27 +138,65 @@ aside section + section { margin-top: 1.25rem; }
 #toolbar[hidden] { display: none; }
 #runbar[hidden] { display: none; }
 
-#runbar {
+/* Toolstrip: commands in named groups separated by rules, which is how
+   Simulink's ribbon says what belongs with what. */
+#toolbar, #runbar {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0;
+  background: var(--panel-header);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.2rem;
+}
+.ts-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0 0.7rem;
+  border-right: 1px solid var(--line);
+}
+.ts-group:last-child { border-right: none; }
+.ts-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  order: 2;
+}
+.ts-controls {
   display: flex;
   align-items: center;
-  gap: 0.5rem 0.75rem;
+  gap: 0.35rem;
   flex-wrap: wrap;
-  margin-bottom: 0.6rem;
-  font-size: 0.9em;
 }
-#runbar label { color: var(--muted); }
-#runbar input, #runbar button {
+.ts-controls label { color: var(--muted); font-size: 0.85em; }
+#toolbar input, #toolbar select, #toolbar button,
+#runbar input, #runbar select, #runbar button {
   font: inherit;
+  font-size: 0.92em;
   color: var(--fg);
-  background: var(--node-fill);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 4px;
-  padding: 0.2rem 0.4rem;
+  padding: 0.18rem 0.45rem;
 }
-#runbar input { width: 6.5rem; }
-#runbar button { cursor: pointer; }
+#runbar input { width: 5.5rem; font-variant-numeric: tabular-nums; }
+#toolbar button, #runbar button { cursor: pointer; }
+#toolbar button:not(:disabled):hover,
 #runbar button:hover { border-color: var(--accent); }
-[data-testid="run-status"] { color: var(--muted); }
+#toolbar button:disabled { opacity: 0.45; cursor: default; }
+button.primary {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+button.primary:hover { filter: brightness(1.08); }
+[data-testid="run-status"] { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 #results { margin-top: 1.25rem; }
 #results[hidden] { display: none; }
@@ -234,28 +313,7 @@ aside section + section { margin-top: 1.25rem; }
   overflow-wrap: anywhere;
 }
 
-#toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.75rem;
-  margin-bottom: 0.6rem;
-  font-size: 0.9em;
-}
-#toolbar .spacer { flex: 1 1 auto; }
-#toolbar label { color: var(--muted); }
-#toolbar select, #toolbar input, #toolbar button {
-  font: inherit;
-  color: var(--fg);
-  background: var(--node-fill);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.2rem 0.4rem;
-}
-#toolbar button { cursor: pointer; }
-#toolbar button:disabled { opacity: 0.45; cursor: default; }
-#toolbar button:not(:disabled):hover { border-color: var(--accent); }
-[data-testid="dirty"] { color: var(--bad); }
+[data-testid="dirty"] { color: var(--bad); font-weight: 600; }
 [data-testid="save-status"] { color: var(--muted); }
 
 [data-testid="selected-params"] input,
@@ -474,3 +532,118 @@ table.rules select:hover { border-color: var(--accent); }
 
 .problems { margin-bottom: 0.5rem; }
 .problems li { color: var(--bad); font-size: 0.9em; overflow-wrap: anywhere; }
+
+
+/* ===== sidebar: model browser and library ==================================
+   Simulink's browser and library are dense, scannable rows with a clear
+   selected state — not paragraphs. */
+
+#diagrams, #palette { list-style: none; padding: 0; }
+#diagrams { margin: 0; }
+#diagrams li + li { margin-top: 1px; }
+#diagrams button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.86em;
+  color: var(--fg);
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 3px;
+  padding: 0.3rem 0.45rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+#diagrams button:hover { background: var(--panel-header); }
+#diagrams button[aria-current] {
+  background: var(--panel-header);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+#palette { margin: 0; max-height: 26rem; overflow-y: auto; }
+#palette li {
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.84em;
+  line-height: 1.35;
+}
+#palette li:last-child { border-bottom: none; }
+#palette strong { font-weight: 600; }
+#palette .params { color: var(--muted); }
+#palette .required { display: block; color: var(--accent); font-size: 0.92em; }
+
+#advice { padding-left: 1rem; font-size: 0.88em; color: var(--muted); }
+#validity { font-weight: 600; font-size: 0.88em; }
+
+/* ===== the linearization caveats ==========================================
+   Four paragraphs of grey prose was the loudest thing on the page while being
+   the least urgent. Collapsible, counted, and each one clipped to two lines —
+   `line-clamp` hides the overflow without touching the text, so the full
+   wording stays available to a reader who expands a row and to the tests. */
+
+#caveats { margin: 0.4rem 0; }
+#caveats[hidden] { display: none; }
+#caveats > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.86em;
+  list-style: none;
+  padding: 0.15rem 0;
+  user-select: none;
+}
+#caveats > summary::-webkit-details-marker { display: none; }
+#caveats > summary::before {
+  content: "\25b8";
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.12s ease;
+}
+#caveats[open] > summary::before { transform: rotate(90deg); }
+#caveats > summary:hover { color: var(--fg); }
+
+#analysis-warnings { margin: 0.2rem 0 0; padding-left: 1.4rem; }
+#analysis-warnings:empty { display: none; }
+#analysis-warnings li {
+  color: var(--muted);
+  font-size: 0.85em;
+  line-height: 1.45;
+  max-width: 82ch;
+  margin-bottom: 0.25rem;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  cursor: pointer;
+}
+#analysis-warnings li[data-expanded] { -webkit-line-clamp: unset; }
+#analysis-warnings li::marker { color: var(--line); }
+
+/* ===== status bar ==========================================================
+   Where Simulink keeps a model's vital statistics: always there, never in the
+   way. */
+
+#statusbar {
+  /* Sticky, not scrolled away with the page: a status bar you have to go
+     looking for is not a status bar. */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.3rem 0.9rem;
+  background: var(--panel-header);
+  border-top: 1px solid var(--line);
+  font-size: 0.8em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+#statusbar[hidden] { display: none; }
+#statusbar .spacer { flex: 1 1 auto; }
+#statusbar [data-testid="status-name"] { color: var(--fg); font-weight: 600; }
+#statusbar [data-valid="true"] { color: var(--good); }
+#statusbar [data-valid="false"] { color: var(--bad); }

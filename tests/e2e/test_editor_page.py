@@ -106,3 +106,33 @@ def test_page_is_usable_on_a_narrow_viewport(page: Page, server: str):
         "        return d.scrollWidth - d.clientWidth; }"
     )
     assert overflow <= 0
+
+
+def test_the_open_diagram_is_marked_in_the_browser_list(page: Page, server: str):
+    """Two rows that look identical give no clue which model is on the canvas."""
+    page.goto(server)
+    expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
+    page.locator(
+        "[data-diagram-path='exercises/exercicio2_sdof_vibration_control/diagram.json']"
+    ).click()
+    expect(page.get_by_test_id("summary")).to_be_visible()
+
+    current = page.locator("[data-diagram-path][aria-current]")
+    expect(current).to_have_count(1)
+    expect(current).to_have_attribute(
+        "data-diagram-path",
+        "exercises/exercicio2_sdof_vibration_control/diagram.json",
+    )
+
+
+def test_the_status_bar_reports_the_model(page: Page, server: str):
+    page.goto(server)
+    expect(page.get_by_test_id("statusbar")).to_be_hidden()
+    page.locator(
+        "[data-diagram-path='exercises/exercicio2_sdof_vibration_control/diagram.json']"
+    ).click()
+    expect(page.get_by_test_id("statusbar")).to_be_visible()
+    expect(page.get_by_test_id("status-shape")).to_contain_text("7 blocks")
+    expect(page.get_by_test_id("status-validity")).to_have_attribute(
+        "data-valid", "true"
+    )
