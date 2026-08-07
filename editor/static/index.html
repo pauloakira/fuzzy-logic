@@ -36,9 +36,12 @@
         <dl data-testid="selected-params"></dl>
       </section>
 
-      <section>
-        <h2>Palette</h2>
-        <ul id="palette" data-testid="palette"></ul>
+      <section id="library">
+        <h2>Library</h2>
+        <input type="search" id="palette-filter" data-testid="palette-filter"
+               placeholder="Search blocks" aria-label="Search blocks">
+        <div id="palette" data-testid="palette"></div>
+        <div id="palette-details" data-testid="palette-details" hidden></div>
       </section>
     </aside>
 
@@ -48,7 +51,6 @@
         <div class="ts-group">
           <span class="ts-label">Edit</span>
           <div class="ts-controls">
-            <select id="add-block" data-testid="add-block"></select>
             <button type="button" id="delete-selected" data-testid="delete-selected"
                     disabled>Delete</button>
           </div>

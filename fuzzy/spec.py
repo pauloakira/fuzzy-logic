@@ -150,6 +150,12 @@ def param_schema(type_name: str) -> list[Param]:
     return out
 
 
+def category_of(type_name: str) -> str:
+    """Which palette section a registered type belongs to."""
+    target = REGISTRY.get(type_name)
+    return str(getattr(target, "category", "Blocks"))
+
+
 def palette() -> dict[str, list[Param]]:
     """Every registered block type with its parameters."""
     return {name: param_schema(name) for name in sorted(REGISTRY)}

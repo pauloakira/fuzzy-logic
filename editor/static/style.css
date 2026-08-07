@@ -563,17 +563,121 @@ table.rules select:hover { border-color: var(--accent); }
   font-weight: 600;
 }
 
-#palette { margin: 0; max-height: 26rem; overflow-y: auto; }
-#palette li {
-  padding: 0.3rem 0.45rem;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.84em;
-  line-height: 1.35;
+/* ===== the library browser =================================================
+   A row is a picture of the block it produces, drawn through the very renderer
+   the canvas uses. That is the affordance the old text list had none of. */
+
+#palette-filter {
+  font: inherit;
+  font-size: 0.85em;
+  width: 100%;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.25rem 0.45rem;
 }
-#palette li:last-child { border-bottom: none; }
-#palette strong { font-weight: 600; }
-#palette .params { color: var(--muted); }
-#palette .required { display: block; color: var(--accent); font-size: 0.92em; }
+#palette-filter:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+#palette { max-height: 24rem; overflow-y: auto; }
+.palette-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.25rem 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.palette-group > summary::-webkit-details-marker { display: none; }
+.palette-group > summary::before {
+  content: "\25b8";
+  width: 0.8em;
+  transition: transform 0.12s ease;
+}
+.palette-group[open] > summary::before { transform: rotate(90deg); }
+.cat-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  letter-spacing: 0;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--fg);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.18rem 0.35rem;
+  cursor: grab;
+}
+.palette-item:hover { background: var(--panel-header); border-color: var(--line); }
+.palette-item:active { cursor: grabbing; }
+.palette-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.palette-item[data-selected] {
+  background: var(--panel-header);
+  border-color: var(--accent);
+}
+.palette-item .item-name { flex: 1 1 auto; }
+.palette-item .item-flag {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.9em;
+}
+/* The thumbnail is decoration inside a button; the click belongs to the row. */
+.thumb { flex: 0 0 auto; pointer-events: none; overflow: visible; }
+.thumb .node-shape { stroke-width: 2.2; }
+
+.palette-empty { color: var(--muted); font-size: 0.85em; font-style: italic; }
+
+#palette-details {
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+  font-size: 0.82em;
+}
+#palette-details[hidden] { display: none; }
+#palette-details h3 { font-size: 0.86rem; margin-bottom: 0.3rem; }
+#palette-details dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.6rem;
+  margin: 0;
+}
+#palette-details dt { color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+#palette-details dd {
+  margin: 0;
+  font-family: ui-monospace, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+#palette-details .req {
+  margin-left: 0.35rem;
+  font-family: inherit;
+  font-size: 0.85em;
+  color: var(--accent);
+}
+#palette-details .muted { color: var(--muted); margin: 0; }
+
+/* A canvas ready to receive a dragged block. */
+#canvas[data-drop-target] {
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+}
 
 #advice { padding-left: 1rem; font-size: 0.88em; color: var(--muted); }
 #validity { font-weight: 600; font-size: 0.88em; }

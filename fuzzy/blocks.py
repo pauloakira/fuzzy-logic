@@ -30,6 +30,12 @@ Inputs = Mapping[str, Any]
 class Block:
     """Base class. Subclasses set the class attributes and implement `output`."""
 
+    #: Which library section this block belongs to, for the editor's palette.
+    #: Editorial rather than derived: `Observer` carries states yet belongs with
+    #: the controllers, and `n_states` is set per instance on the plants anyway,
+    #: so the three orthogonal properties cannot answer this question.
+    category: str = "Blocks"
+
     inputs: tuple[str, ...] = ()
     outputs: tuple[str, ...] = ("y",)
     n_states: int = 0
@@ -70,6 +76,8 @@ class Block:
 class Constant(Block):
     """Constant source."""
 
+    category = "Sources"
+
     feedthrough = False
 
     def __init__(self, value: float = 0.0, name: str | None = None) -> None:
@@ -82,6 +90,8 @@ class Constant(Block):
 
 class Step(Block):
     """Step from `initial` to `final` at `t_step`."""
+
+    category = "Sources"
 
     feedthrough = False
 
@@ -108,6 +118,8 @@ class Harmonic(Block):
     diagram rather than a rebuilt one.
     """
 
+    category = "Sources"
+
     feedthrough = False
 
     def __init__(
@@ -132,6 +144,8 @@ class Harmonic(Block):
 class Gain(Block):
     """Scalar or matrix gain."""
 
+    category = "Math"
+
     inputs = ("u",)
 
     def __init__(self, k: ArrayLike, name: str | None = None) -> None:
@@ -144,6 +158,8 @@ class Gain(Block):
 
 class Sum(Block):
     """Signed sum of named input ports."""
+
+    category = "Math"
 
     def __init__(
         self,
@@ -171,6 +187,8 @@ class Select(Block):
     controller wires up through one `Select` per input.
     """
 
+    category = "Math"
+
     inputs = ("u",)
 
     def __init__(self, index: int, name: str | None = None) -> None:
@@ -183,6 +201,8 @@ class Select(Block):
 
 class Saturation(Block):
     """Clip to `[lo, hi]`."""
+
+    category = "Math"
 
     inputs = ("u",)
 
@@ -206,6 +226,8 @@ class StateSpacePlant(Block):
     `C` defaults to the identity, so `y` is the full state vector — which is what
     a phase-plane fuzzy controller or a state-feedback law consumes.
     """
+
+    category = "Plants"
 
     inputs = ("u",)
 
@@ -292,6 +314,8 @@ class MotorPlant(Block):
     algebraic dependence on its input.
     """
 
+    category = "Plants"
+
     inputs = ("u",)
     outputs = ("y",)
     n_states = 2
@@ -352,6 +376,8 @@ class FISBlock(Block):
     analogue of the entries of a state-feedback matrix `K`.
     """
 
+    category = "Controllers"
+
     outputs = ("u",)
     discrete = True
     feedthrough = False
@@ -401,6 +427,8 @@ class PIDBlock(Block):
     the integrator is corrected toward feasibility with time constant `Tt`.
     Saturation is internal so the anti-windup path needs no feedback wire.
     """
+
+    category = "Controllers"
 
     inputs = ("x", "x_dot")
     outputs = ("u",)
@@ -463,6 +491,8 @@ class Observer(Block):
     estimate.
     """
 
+    category = "Controllers"
+
     inputs = ("y", "u")
     outputs = ("xhat",)
 
@@ -508,6 +538,8 @@ class Observer(Block):
 class StateFeedback(Block):
     """Sampled `u = -K z` — LQR or pole-placement gains."""
 
+    category = "Controllers"
+
     inputs = ("z",)
     outputs = ("u",)
     discrete = True
@@ -526,3 +558,8 @@ class StateFeedback(Block):
 
     def output(self, t: float, x: NDArray[np.float64], u: Inputs) -> dict[str, Any]:
         return {"u": self._held}
+
+
+# `sdof_plant` is a factory function, not a class, so its palette section is an
+# attribute on the function rather than a class attribute.
+sdof_plant.category = "Plants"  # type: ignore[attr-defined]

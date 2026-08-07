@@ -210,3 +210,45 @@ than a decision to defend.
 - Tests — `tests/e2e/test_canvas.py`, under "nodes": the outline per block kind,
   the name below the shape, the equation on the face, the sum's signs, and the
   `Ts` annotation
+
+
+---
+
+## 6. The library palette
+
+Added 2026-08-05, after the palette was called out as badly designed. Research
+first: [Simulink's Library
+Browser](https://www.mathworks.com/help/simulink/ug/add-blocks-to-models.html)
+is a *tree by category* with a search box that filters into a results tab,
+drag-onto-canvas (or `Ctrl+I` / right-click "Add block to model"), and a details
+pane carrying the description so the list itself stays scannable. Node-RED's
+palette lands in the same place — collapsible categories, a filter above,
+drag-to-canvas.
+
+The old panel was a flat alphabetical list of names and parameter names. Five
+problems, in rough order of importance:
+
+1. **It was inert.** It looked exactly like a library browser and could not add
+   anything; blocks came from a separate `block…` dropdown in the toolbar. Two
+   places for one job, and the prominent one did not work.
+2. **No grouping**, though `blocks.py` already organises itself into Sources /
+   Algebraic / Plants / Controllers. `palette()` sorted that structure away.
+3. **No search.**
+4. **Parameters on the row**, which made `MotorPlant` and `Observer` two lines
+   tall and could not be acted on there.
+5. **No icon** — a row was bold text, so it looked nothing like what it made.
+
+Now: collapsible sections in library order, a filter that also matches parameter
+names (you hunt for `hi`, not `Saturation`), a details pane on selection, and
+click-or-drag to add. The toolbar dropdown is gone.
+
+The icon is the part worth keeping honest. `blockThumbnail` draws through the
+*same* `nodePath` and `nodeIcon` the canvas uses, so a row is a picture of what
+it produces rather than a second set of icons to keep in step. That is the whole
+affordance a library browser runs on.
+
+**Category is editorial, not derived.** The three orthogonal properties cannot
+answer it: `Observer` carries states yet belongs with the controllers,
+`StateSpacePlant` sets `n_states` per instance so the class attribute is 0, and
+`sdof_plant` is a factory function with no class at all. So `Block.category` is
+an explicit attribute, set to match the sections the file already had.

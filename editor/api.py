@@ -36,7 +36,7 @@ from fuzzy.fis import FISValidationError
 from fuzzy.membership import TermError
 from fuzzy.rules import RuleError
 from fuzzy.sim import AlgebraicLoopError, Diagram, WiringError, simulate
-from fuzzy.spec import SpecError, from_spec, palette, to_spec
+from fuzzy.spec import SpecError, category_of, from_spec, palette, to_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -254,7 +254,11 @@ def get_palette() -> dict[str, Any]:
 
     return {
         "blocks": {
-            name: {"params": [entry(p) for p in params], **sides(name)}
+            name: {
+                "params": [entry(p) for p in params],
+                "category": category_of(name),
+                **sides(name),
+            }
             for name, params in palette().items()
         }
     }

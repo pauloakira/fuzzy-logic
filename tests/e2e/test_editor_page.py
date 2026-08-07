@@ -30,24 +30,32 @@ def test_page_loads_and_reaches_ready(page: Page, server: str):
 
 
 def test_palette_is_populated_from_the_api(page: Page, server: str):
-    """The page must render what /api/palette returns, not a hardcoded list."""
+    """The page must render what /api/palette returns, not a hardcoded list.
+
+    The library's grouping, search and add behaviour live in `test_library.py`;
+    what matters here is that the panel is driven by the endpoint at all."""
     page.goto(server)
     expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
-    palette = page.get_by_test_id("palette").locator("li")
-    # every registered block type, whatever that count happens to be
+    rows = page.get_by_test_id("palette").locator(".palette-item")
     registered = len(page.evaluate("() => Object.keys(window.__palette || {})") or [])
-    expect(palette).to_have_count(registered or 14)
+    expect(rows).to_have_count(registered or 14)
     expect(page.locator("[data-block-type='FISBlock']")).to_be_visible()
-    expect(page.locator("[data-block-type='Observer']")).to_contain_text(
-        "A, B, C, L, x0"
-    )
 
 
 def test_required_parameters_are_marked(page: Page, server: str):
+    """A row flags that the block needs something; the details pane says what.
+
+    Both on the row was what made `MotorPlant` wrap to two lines."""
     page.goto(server)
-    expect(page.locator("[data-block-type='PIDBlock']")).to_contain_text(
-        "required: kp, ki, kd"
-    )
+    expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
+    row = page.locator(".palette-item[data-block-type='PIDBlock']")
+    expect(row.locator(".item-flag")).to_have_count(1)
+
+    row.focus()
+    params = page.get_by_test_id("palette-detail-params")
+    for name in ("kp", "ki", "kd"):
+        expect(params).to_contain_text(name)
+    expect(params).to_contain_text("required")
 
 
 def test_both_committed_diagrams_are_offered(page: Page, server: str):

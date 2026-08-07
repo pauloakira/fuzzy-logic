@@ -11,6 +11,8 @@
 // off stable hooks rather than markup structure.
 
 import {
+  NODE,
+  blockThumbnail,
   enablePanZoom,
   fitView,
   highlightProblems,
@@ -94,35 +96,121 @@ const SERIOUS = ["not differentiable", "cannot move", "does not respond"];
 
 // ----- palette and diagram list ----------------------------------------------
 
+/**
+ * The block library: a browser, not a printed list.
+ *
+ * Modelled on Simulink's Library Browser — collapsible sections, a filter over
+ * the whole set, and a row you can put on the canvas. Each row draws the block's
+ * *actual* canvas icon through `blockThumbnail`, so what you pick is a picture
+ * of what you get; that affordance is the reason a library browser works at all,
+ * and the reason this panel used to be inert text.
+ *
+ * Parameters are not on the row. They made `MotorPlant` two lines tall and could
+ * not be acted on there; they live in the details pane, which is where Simulink
+ * puts a block's description too.
+ */
+const CATEGORY_ORDER = ["Sources", "Math", "Plants", "Controllers", "Blocks"];
+
 async function loadPalette() {
   const { blocks } = await api.get("/api/palette");
   state.palette = blocks;
   window.__palette = blocks;
-
-  const list = byId("palette");
-  list.replaceChildren();
-  const chooser = byId("add-block");
-  chooser.replaceChildren(el("option", { value: "" }, "block…"));
-
-  for (const [name, meta] of Object.entries(blocks)) {
-    const required = meta.params.filter((p) => p.required).map((p) => p.name);
-    const item = el("li", { "data-block-type": name });
-    item.appendChild(el("strong", {}, name));
-    item.appendChild(
-      el("span", { class: "params" },
-        meta.params.length
-          ? ` ${meta.params.map((p) => p.name).join(", ")}`
-          : " (no parameters)")
-    );
-    if (required.length) {
-      item.appendChild(
-        el("span", { class: "required" }, `required: ${required.join(", ")}`)
-      );
-    }
-    list.appendChild(item);
-    chooser.appendChild(el("option", { value: name }, name));
-  }
+  renderPalette();
   return Object.keys(blocks).length;
+}
+
+function renderPalette(filter = "") {
+  const host = byId("palette");
+  host.replaceChildren();
+  const needle = filter.trim().toLowerCase();
+
+  const groups = new Map();
+  for (const [name, meta] of Object.entries(state.palette)) {
+    // Match the parameter names too: someone hunting for a saturation limit
+    // searches "hi", not "Saturation".
+    const haystack = `${name} ${meta.category} ${
+      (meta.params || []).map((p) => p.name).join(" ")}`.toLowerCase();
+    if (needle && !haystack.includes(needle)) continue;
+    const key = meta.category || "Blocks";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push([name, meta]);
+  }
+
+  if (!groups.size) {
+    host.appendChild(el("p", { class: "palette-empty" }, `No block matches "${filter}"`));
+    return 0;
+  }
+
+  const order = [...groups.keys()].sort(
+    (a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)
+  );
+  for (const category of order) {
+    const box = el("details", { class: "palette-group", "data-category": category });
+    box.open = true;
+    const head = el("summary", {});
+    head.append(
+      el("span", { class: "cat-name" }, category),
+      el("span", { class: "cat-count" }, String(groups.get(category).length))
+    );
+    box.appendChild(head);
+
+    for (const [name, meta] of groups.get(category)) {
+      const row = el("button", {
+        type: "button", class: "palette-item", "data-block-type": name,
+        draggable: "true", title: `Add ${name} to the diagram`,
+      });
+      row.append(
+        blockThumbnail(name, defaultParams(name)),
+        el("span", { class: "item-name" }, name)
+      );
+      if ((meta.params || []).some((p) => p.required)) {
+        row.appendChild(el("span", { class: "item-flag", title: "has required parameters" }, "!"));
+      }
+      row.addEventListener("click", () => {
+        selectPaletteItem(name);
+        addBlock(name);
+      });
+      // Selecting without adding, for reading the parameters first.
+      row.addEventListener("focus", () => selectPaletteItem(name));
+      row.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/block-type", name);
+        e.dataTransfer.effectAllowed = "copy";
+        selectPaletteItem(name);
+      });
+      box.appendChild(row);
+    }
+    host.appendChild(box);
+  }
+  return groups.size;
+}
+
+/** The details pane: what this block takes, and which of it is mandatory. */
+function selectPaletteItem(name) {
+  const meta = state.palette[name];
+  const pane = byId("palette-details");
+  pane.hidden = !meta;
+  if (!meta) return;
+  for (const b of document.querySelectorAll(".palette-item[data-selected]")) {
+    b.removeAttribute("data-selected");
+  }
+  document.querySelector(`.palette-item[data-block-type="${name}"]`)
+    ?.setAttribute("data-selected", "true");
+
+  pane.replaceChildren(el("h3", { "data-testid": "palette-detail-name" }, name));
+  const params = meta.params || [];
+  if (!params.length) {
+    pane.appendChild(el("p", { class: "muted" }, "No parameters."));
+    return;
+  }
+  const list = el("dl", { "data-testid": "palette-detail-params" });
+  for (const p of params) {
+    const dt = el("dt", {}, p.name);
+    if (p.required) dt.appendChild(el("span", { class: "req" }, "required"));
+    list.append(dt, el("dd", {},
+      p.default === null || p.default === undefined
+        ? "\u2014" : JSON.stringify(p.default)));
+  }
+  pane.appendChild(list);
 }
 
 async function loadDiagramList() {
@@ -192,17 +280,30 @@ function defaultParams(type) {
   return params;
 }
 
-function addBlock(type) {
+/**
+ * Add a block, at `at` if a drop said where, otherwise to the right of
+ * everything already placed.
+ */
+function addBlock(type, at = null) {
   const name = uniqueName(type.toLowerCase());
   const xs = state.spec.blocks.map((b) => b.layout?.x ?? 0);
+  const layout = at
+    ? { x: Math.round(at.x - NODE.width / 2), y: Math.round(at.y - NODE.height / 2) }
+    : { x: Math.max(0, ...xs) + 170, y: 40 };
   mutate((spec) => {
-    spec.blocks.push({
-      type,
-      name,
-      params: defaultParams(type),
-      layout: { x: Math.max(0, ...xs) + 170, y: 40 },
-    });
+    spec.blocks.push({ type, name, params: defaultParams(type), layout });
   });
+}
+
+/** Where a drop landed, in diagram coordinates rather than screen pixels. */
+function dropPoint(canvas, event) {
+  const ctm = canvas.getScreenCTM();
+  if (!ctm) return { x: 60, y: 60 };
+  const p = canvas.createSVGPoint();
+  p.x = event.clientX;
+  p.y = event.clientY;
+  const q = p.matrixTransform(ctm.inverse());
+  return { x: q.x, y: q.y };
 }
 
 function deleteSelected() {
@@ -894,11 +995,26 @@ function bindToolbar() {
     fitView(byId("canvas"), state.spec);
     showZoom();
   });
-  byId("add-block").addEventListener("change", (e) => {
-    if (e.target.value) {
-      addBlock(e.target.value);
-      e.target.value = "";
-    }
+  byId("palette-filter").addEventListener("input", (e) => {
+    renderPalette(e.target.value);
+  });
+
+  // Drop a library row onto the canvas, at the point it was dropped. The
+  // dragover handler has to preventDefault or the browser refuses the drop.
+  const canvas = byId("canvas");
+  canvas.addEventListener("dragover", (e) => {
+    if (![...e.dataTransfer.types].includes("text/block-type")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    canvas.dataset.dropTarget = "true";
+  });
+  canvas.addEventListener("dragleave", () => delete canvas.dataset.dropTarget);
+  canvas.addEventListener("drop", (e) => {
+    const type = e.dataTransfer.getData("text/block-type");
+    delete canvas.dataset.dropTarget;
+    if (!type || !state.spec) return;
+    e.preventDefault();
+    addBlock(type, dropPoint(canvas, e));
   });
   byId("delete-selected").addEventListener("click", deleteSelected);
   byId("save").addEventListener("click", save);

@@ -150,7 +150,7 @@ def test_invalid_json_is_rejected_and_leaves_the_spec_alone(page: Page, server: 
 
 def test_adding_a_block_from_the_palette(page: Page, server: str):
     open_diagram(page, server)
-    page.get_by_test_id("add-block").select_option("Gain")
+    page.locator(".palette-item[data-block-type='Gain']").click()
 
     expect(page.get_by_test_id("canvas")).to_have_attribute("data-nodes", "8")
     expect(page.locator(".node[data-block='gain']")).to_have_count(1)
@@ -161,8 +161,8 @@ def test_adding_a_block_from_the_palette(page: Page, server: str):
 
 def test_added_blocks_get_unique_names(page: Page, server: str):
     open_diagram(page, server)
-    page.get_by_test_id("add-block").select_option("Gain")
-    page.get_by_test_id("add-block").select_option("Gain")
+    page.locator(".palette-item[data-block-type='Gain']").click()
+    page.locator(".palette-item[data-block-type='Gain']").click()
     names = [b["name"] for b in spec_of(page)["blocks"]]
     assert "gain" in names and "gain2" in names
 
@@ -170,7 +170,7 @@ def test_added_blocks_get_unique_names(page: Page, server: str):
 def test_an_added_block_is_reported_invalid_until_wired(page: Page, server: str):
     """A new block has an unconnected input; the canvas should say so and mark it."""
     open_diagram(page, server)
-    page.get_by_test_id("add-block").select_option("Gain")
+    page.locator(".palette-item[data-block-type='Gain']").click()
     expect(page.get_by_test_id("validity")).to_have_attribute("data-ok", "false")
     expect(page.locator(".node[data-block='gain'][data-problem]")).to_have_count(1)
 
@@ -322,7 +322,7 @@ def test_work_in_progress_can_be_saved(page: Page, server: str):
     guard that matters is the next test: the file must load back.
     """
     open_diagram(page, server)
-    page.get_by_test_id("add-block").select_option("Gain")
+    page.locator(".palette-item[data-block-type='Gain']").click()
     expect(page.get_by_test_id("validity")).to_have_attribute("data-ok", "false")
     page.get_by_test_id("save").click()
     expect(page.get_by_test_id("save-status")).to_contain_text("saved")

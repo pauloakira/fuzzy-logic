@@ -372,3 +372,20 @@ def test_the_root_locus_starts_at_the_open_loop_poles(spec):
     want = sorted((p[0], p[1]) for p in plant["poles"])
     for (a, b), (c, d) in zip(drawn, want, strict=True):
         assert a == pytest.approx(c, abs=1e-6) and b == pytest.approx(d, abs=1e-6)
+
+
+def test_the_palette_carries_a_category_per_block():
+    """The palette groups by library section, the way a library browser does.
+    Editorial, not derived: `Observer` carries states yet belongs with the
+    controllers, and the plants set `n_states` per instance."""
+    blocks = client.get("/api/palette").json()["blocks"]
+    by_category = {}
+    for name, meta in blocks.items():
+        by_category.setdefault(meta["category"], set()).add(name)
+
+    assert by_category["Sources"] == {"Constant", "Step", "Harmonic"}
+    assert by_category["Math"] == {"Gain", "Sum", "Select", "Saturation"}
+    assert by_category["Plants"] == {"StateSpacePlant", "MotorPlant", "sdof_plant"}
+    assert by_category["Controllers"] == {
+        "FISBlock", "PIDBlock", "Observer", "StateFeedback"
+    }

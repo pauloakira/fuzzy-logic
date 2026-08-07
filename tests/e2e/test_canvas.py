@@ -88,7 +88,7 @@ def test_the_outline_says_what_kind_of_block_it_is(page: Page, server: str):
     expect(page.locator(".node[data-block='total'] circle.node-shape")).to_have_count(1)
     expect(page.locator(".node[data-block='plant'] rect.node-shape")).to_have_count(1)
 
-    page.get_by_test_id("add-block").select_option("Gain")
+    page.locator(".palette-item[data-block-type='Gain']").click()
     expect(
         page.locator(".node[data-type='Gain'] polygon.node-shape")
     ).to_have_count(1)

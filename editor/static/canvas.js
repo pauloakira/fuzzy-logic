@@ -657,3 +657,28 @@ export function highlightProblems(root, problems = []) {
     }
   }
 }
+
+
+/**
+ * A miniature of one block type, for the library palette.
+ *
+ * Draws through the *same* `nodePath` and `nodeIcon` the canvas uses, so a
+ * palette row is a picture of the thing it will produce rather than a second
+ * set of icons to keep in step — the affordance Simulink's library browser
+ * relies on. Scaled to `height` px with the label omitted; a row already has
+ * the name beside it.
+ */
+export function blockThumbnail(type, params = {}, height = 26) {
+  const scale = height / NODE.height;
+  const w = NODE.width * scale;
+  const root = svg("svg", {
+    width: w.toFixed(1), height, viewBox: `0 0 ${NODE.width} ${NODE.height}`,
+    class: "thumb", "data-thumb": type, "aria-hidden": "true", focusable: "false",
+  });
+  const block = { type, name: type, params, _pos: { x: 0, y: 0 }, _ports: { inputs: [], outputs: [] } };
+  const g = svg("g", { class: "node" });
+  g.appendChild(nodePath(block));
+  g.appendChild(nodeIcon(block));
+  root.appendChild(g);
+  return root;
+}
