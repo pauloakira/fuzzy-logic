@@ -118,5 +118,94 @@ export function renderPlot(root, result, keys, size) {
     );
   }
 
+  attachCursor(root, { series, t, px, py, size, lo, hi });
   return { lo, hi, t0, t1, drawn: series.length };
+}
+
+/**
+ * A data cursor, the way a MATLAB figure has one: hover and the plot tells you
+ * the value under the pointer, snapped to a real sample rather than interpolated
+ * off the pixel position.
+ *
+ * Reading a number off a curve by eye is the thing a static plot cannot do, and
+ * it is the interaction people actually reach for — ahead of zoom, which the
+ * axis controls already cover.
+ */
+function attachCursor(root, geom) {
+  // An <svg> root only hit-tests where something is painted, so a pointer over
+  // empty plot area reaches nothing. A transparent rect over the plotting
+  // rectangle gives every position something to hit, and events bubble to root.
+  root.appendChild(svg("rect", {
+    x: PAD.left, y: PAD.top,
+    width: Math.max(0, geom.size.width - PAD.left - PAD.right),
+    height: Math.max(0, geom.size.height - PAD.top - PAD.bottom),
+    class: "cursor-catcher",
+  }));
+
+  const layer = svg("g", { class: "cursor", "data-testid": "plot-cursor" });
+  layer.setAttribute("visibility", "hidden");
+  const rule = svg("line", { class: "cursor-rule", y1: PAD.top,
+                             y2: geom.size.height - PAD.bottom });
+  layer.appendChild(rule);
+  const dots = geom.series.map((s) =>
+    layer.appendChild(svg("circle", { r: 3, class: "cursor-dot", fill: s.colour })));
+  const box = svg("g", { class: "cursor-readout" });
+  const plate = svg("rect", { rx: 3, class: "cursor-plate" });
+  const label = svg("text", { class: "cursor-label" });
+  box.append(plate, label);
+  layer.appendChild(box);
+  root.appendChild(layer);
+
+  const nearest = (x) => {
+    // Binary search rather than a scan: a decimated run is still 1400 samples
+    // and this runs on every pointer move.
+    let lo = 0, hi = geom.t.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (geom.px(geom.t[mid]) < x) lo = mid; else hi = mid;
+    }
+    return Math.abs(geom.px(geom.t[lo]) - x) <= Math.abs(geom.px(geom.t[hi]) - x)
+      ? lo : hi;
+  };
+
+  root.addEventListener("pointerleave", () => layer.setAttribute("visibility", "hidden"));
+  root.addEventListener("pointermove", (event) => {
+    const rect = root.getBoundingClientRect();
+    // The plot is drawn in its own pixel coordinates, so the viewBox and the
+    // element agree up to this one scale factor.
+    const x = (event.clientX - rect.left) * (geom.size.width / rect.width);
+    if (x < PAD.left || x > geom.size.width - PAD.right) {
+      return layer.setAttribute("visibility", "hidden");
+    }
+    const i = nearest(x);
+    const cx = geom.px(geom.t[i]);
+    layer.setAttribute("visibility", "visible");
+    layer.dataset.index = String(i);
+    layer.dataset.t = String(geom.t[i]);
+    rule.setAttribute("x1", cx);
+    rule.setAttribute("x2", cx);
+
+    label.replaceChildren();
+    const rows = [`t = ${nice(geom.t[i])} s`,
+                  ...geom.series.map((s) => `${s.key} = ${nice(s.values[i])}`)];
+    rows.forEach((text, r) => {
+      const line = svg("tspan", { x: 0, dy: r ? 12 : 0 }, text);
+      if (r) line.setAttribute("fill", geom.series[r - 1].colour);
+      label.appendChild(line);
+    });
+    geom.series.forEach((s, k) => {
+      dots[k].setAttribute("cx", cx);
+      dots[k].setAttribute("cy", geom.py(s.values[i]));
+    });
+
+    // Flip the readout to the other side of the rule near the right edge, so it
+    // never runs off the plot.
+    const w = 8.2 * Math.max(...rows.map((r) => r.length)) + 12;
+    const left = cx + 10 + w > geom.size.width ? cx - 10 - w : cx + 10;
+    box.setAttribute("transform", `translate(${left} ${PAD.top + 12})`);
+    plate.setAttribute("x", -6);
+    plate.setAttribute("y", -12);
+    plate.setAttribute("width", w);
+    plate.setAttribute("height", rows.length * 12 + 8);
+  });
 }

@@ -67,7 +67,14 @@ body {
   background: var(--well);
   color: var(--fg);
   font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* A column at least as tall as the viewport, so the status bar sits at the
+     bottom of the window when the page is short instead of floating halfway up
+     it. `sticky` alone only pins it once there is something to scroll. */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
 }
+main { flex: 1 0 auto; }
 
 header {
   display: flex;
@@ -91,7 +98,8 @@ h2 {
   padding: 0.42rem 0.7rem;
   background: var(--panel-header);
   border-bottom: 1px solid var(--line);
-  border-radius: var(--radius) var(--radius) 0 0;
+  /* No radius of its own: the card already clips to its corners, and a second
+     rounded rectangle inside the first leaves a visible seam. */
 }
 h3 { font-size: 0.9rem; font-weight: 600; margin: 0 0 0.2rem; }
 
@@ -804,3 +812,86 @@ table.rules select:hover { border-color: var(--accent); }
 #statusbar [data-testid="status-name"] { color: var(--fg); font-weight: 600; }
 #statusbar [data-valid="true"] { color: var(--good); }
 #statusbar [data-valid="false"] { color: var(--bad); }
+
+
+/* ===== hiding the sidebar ==================================================
+   A block diagram is wide. Once it is built, the library and the model browser
+   are just margin. */
+
+body[data-sidebar="hidden"] main { grid-template-columns: 1fr; }
+body[data-sidebar="hidden"] aside { display: none; }
+
+#toggle-sidebar {
+  font: inherit;
+  font-size: 0.78em;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.12rem 0.45rem;
+  cursor: pointer;
+}
+#toggle-sidebar:hover { color: var(--fg); border-color: var(--muted); }
+header .spacer { flex: 1 1 auto; }
+
+/* ===== collapsible charts ==================================================
+   Five charts stacked with no separation read as one long strip. Each is its
+   own card with a title bar that folds it away, so you can put the two you are
+   comparing next to each other. */
+
+.chart-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+.chart-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.42rem 0.7rem;
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  user-select: none;
+}
+.chart-panel > summary::-webkit-details-marker { display: none; }
+.chart-panel > summary::before {
+  content: "\25b8";
+  width: 0.8em;
+  transition: transform 0.12s ease;
+}
+.chart-panel[open] > summary::before { transform: rotate(90deg); }
+.chart-panel > summary:hover { color: var(--fg); }
+.chart-panel:not([open]) > summary { border-bottom: none; }
+.chart-panel > .chart-body { padding: 0.6rem 0.7rem; }
+.chart-panel svg { margin-top: 0; }
+
+
+/* ===== the data cursor =====================================================
+   A MATLAB figure tells you the value under the pointer. Reading a number off a
+   curve by eye is the thing a static plot cannot do. */
+
+#plot { cursor: crosshair; }
+.cursor-catcher { fill: transparent; pointer-events: all; }
+.cursor { pointer-events: none; }
+.cursor-rule { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.cursor-dot { stroke: var(--panel); stroke-width: 1.5; }
+.cursor-plate {
+  fill: var(--panel);
+  stroke: var(--line);
+  opacity: 0.95;
+}
+.cursor-label {
+  font-size: 10.5px;
+  font-family: ui-monospace, Menlo, monospace;
+  fill: var(--fg);
+  dominant-baseline: hanging;
+}

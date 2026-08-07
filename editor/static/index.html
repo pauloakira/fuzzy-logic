@@ -10,6 +10,9 @@
   <header>
     <h1>Block editor</h1>
     <span id="status" data-testid="status">loading…</span>
+    <span class="spacer"></span>
+    <button type="button" id="toggle-sidebar" data-testid="toggle-sidebar"
+            aria-expanded="true" title="Show or hide the sidebar">Hide sidebar</button>
   </header>
 
   <main>
@@ -133,17 +136,33 @@
           <ul id="analysis-warnings" data-testid="analysis-warnings"></ul>
         </details>
         <div id="analysis-charts">
-          <h2>Frequency response</h2>
+          <details class="chart-panel" data-chart="bode" open>
+            <summary>Frequency response</summary>
+            <div class="chart-body">
           <svg id="bode" data-testid="bode" role="img" aria-label="Bode plot"></svg>
-          <h2>Poles &amp; zeros</h2>
+            </div>
+          </details>
+          <details class="chart-panel" data-chart="pzmap" open>
+            <summary>Poles &amp; zeros</summary>
+            <div class="chart-body">
           <svg id="pzmap" data-testid="pzmap" role="img" aria-label="Pole-zero map"></svg>
+            </div>
+          </details>
           <div id="loop-charts" hidden>
-            <h2>Nyquist</h2>
-            <svg id="nyquist" data-testid="nyquist" role="img"
+          <details class="chart-panel" data-chart="nyquist" open>
+            <summary>Nyquist</summary>
+            <div class="chart-body">
+          <svg id="nyquist" data-testid="nyquist" role="img"
                  aria-label="Nyquist plot"></svg>
-            <h2>Root locus</h2>
-            <svg id="locus" data-testid="locus" role="img"
+            </div>
+          </details>
+          <details class="chart-panel" data-chart="locus" open>
+            <summary>Root locus</summary>
+            <div class="chart-body">
+          <svg id="locus" data-testid="locus" role="img"
                  aria-label="Root locus"></svg>
+            </div>
+          </details>
           </div>
         </div>
       </section>

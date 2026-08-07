@@ -995,6 +995,23 @@ function bindToolbar() {
     fitView(byId("canvas"), state.spec);
     showZoom();
   });
+  byId("toggle-sidebar").addEventListener("click", (e) => {
+    const hidden = document.body.dataset.sidebar === "hidden";
+    document.body.dataset.sidebar = hidden ? "shown" : "hidden";
+    e.currentTarget.setAttribute("aria-expanded", String(hidden));
+    e.currentTarget.textContent = hidden ? "Hide sidebar" : "Show sidebar";
+    // Every chart sizes itself from its measured box, and the box just changed.
+    if (state.result) { drawResult(); if (state.analysis) drawAnalysis(); }
+  });
+
+  // A collapsed chart measures 0 wide, so it has to be redrawn when it reopens
+  // or it comes back as a sliver.
+  for (const panel of document.querySelectorAll(".chart-panel")) {
+    panel.addEventListener("toggle", () => {
+      if (panel.open && state.analysis) drawAnalysis();
+    });
+  }
+
   byId("palette-filter").addEventListener("input", (e) => {
     renderPalette(e.target.value);
   });

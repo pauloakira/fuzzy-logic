@@ -430,3 +430,74 @@ def test_copying_does_not_toggle_the_panel(page: Page, server: str):
     run(page)
     page.get_by_test_id("copy-caveats").click()
     assert page.locator("#caveats").get_attribute("open") is None
+
+
+# ----- chart panels and the data cursor -------------------------------------------
+
+
+def test_each_chart_is_its_own_foldable_panel(page: Page, server: str):
+    """Five charts stacked with no separation read as one long strip."""
+    open_diagram(page, server, EX2)
+    run(page)
+    panels = page.eval_on_selector_all(
+        ".chart-panel", "els => els.map(e => e.dataset.chart)"
+    )
+    assert panels == ["bode", "pzmap", "nyquist", "locus"]
+
+    bode = page.locator(".chart-panel[data-chart='bode']")
+    bode.locator("summary").click()
+    expect(page.get_by_test_id("bode")).to_be_hidden()
+    bode.locator("summary").click()
+    expect(page.get_by_test_id("bode")).to_be_visible()
+
+
+def test_a_reopened_chart_is_redrawn_at_its_real_width(page: Page, server: str):
+    """A collapsed chart measures 0 wide; drawing at that size brings it back as
+    a sliver."""
+    open_diagram(page, server, EX2)
+    run(page)
+    before = page.get_by_test_id("bode").get_attribute("viewBox")
+    summary = page.locator(".chart-panel[data-chart='bode'] summary")
+    summary.click()
+    summary.click()
+    expect(page.get_by_test_id("bode")).to_be_visible()
+    assert page.get_by_test_id("bode").get_attribute("viewBox") == before
+
+
+def test_the_response_plot_has_a_data_cursor(page: Page, server: str):
+    """MATLAB's most-reached-for chart interaction: hover and it tells you the
+    value under the pointer, snapped to a real sample."""
+    open_diagram(page, server, EX2)
+    run(page)
+    cursor = page.get_by_test_id("plot-cursor")
+    assert cursor.get_attribute("visibility") == "hidden"
+
+    # `bounding_box` is in page coordinates and `mouse.move` in viewport ones,
+    # and the plot sits well down a long page — without scrolling to it the
+    # pointer lands on whatever is at those viewport coordinates instead.
+    page.get_by_test_id("plot").scroll_into_view_if_needed()
+    box = page.get_by_test_id("plot").bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.6, box["y"] + box["height"] / 2)
+    expect(cursor).to_have_attribute("visibility", "visible")
+
+    readout = cursor.locator("text").text_content()
+    assert "t =" in readout and "plant.y[0]" in readout
+
+    # snapped to a sample, and the right one for where the pointer is
+    t = float(cursor.get_attribute("data-t"))
+    assert t == pytest.approx(0.6 * 10.0, rel=0.15)
+
+
+def test_the_cursor_hides_when_the_pointer_leaves(page: Page, server: str):
+    open_diagram(page, server, EX2)
+    run(page)
+    page.get_by_test_id("plot").scroll_into_view_if_needed()
+    box = page.get_by_test_id("plot").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    expect(page.get_by_test_id("plot-cursor")).to_have_attribute(
+        "visibility", "visible"
+    )
+    page.mouse.move(box["x"] - 40, box["y"] - 40)
+    expect(page.get_by_test_id("plot-cursor")).to_have_attribute(
+        "visibility", "hidden"
+    )

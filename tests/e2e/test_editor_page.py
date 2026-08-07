@@ -144,3 +144,32 @@ def test_the_status_bar_reports_the_model(page: Page, server: str):
     expect(page.get_by_test_id("status-validity")).to_have_attribute(
         "data-valid", "true"
     )
+
+
+def test_the_sidebar_can_be_hidden(page: Page, server: str):
+    """A block diagram is wide; once it is built the library is just margin."""
+    page.goto(server)
+    expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
+    aside = page.locator("aside")
+    expect(aside).to_be_visible()
+
+    page.get_by_test_id("toggle-sidebar").click()
+    expect(aside).to_be_hidden()
+    expect(page.get_by_test_id("toggle-sidebar")).to_have_text("Show sidebar")
+
+    page.get_by_test_id("toggle-sidebar").click()
+    expect(aside).to_be_visible()
+
+
+def test_the_status_bar_sits_at_the_bottom_of_a_short_page(page: Page, server: str):
+    """`sticky` alone only pins it once there is something to scroll, so on a
+    short page it floated halfway up with empty well beneath it."""
+    page.goto(server)
+    page.locator(
+        "[data-diagram-path='exercises/exercicio2_sdof_vibration_control/diagram.json']"
+    ).click()
+    expect(page.get_by_test_id("statusbar")).to_be_visible()
+
+    bar = page.get_by_test_id("statusbar").bounding_box()
+    height = page.evaluate("() => window.innerHeight")
+    assert bar["y"] + bar["height"] >= height - 2, "status bar is not at the bottom"
