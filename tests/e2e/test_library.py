@@ -174,3 +174,18 @@ def test_the_canvas_signals_that_it_will_accept_the_drop(page: Page, server: str
         }"""
     )
     expect(page.get_by_test_id("canvas")).to_have_attribute("data-drop-target", "true")
+
+
+def test_the_library_scroller_is_themed_not_the_operating_system_default(
+    page: Page, server: str
+):
+    """A wide bright track inside a dark panel looks like another application's
+    widget wandered in."""
+    open_editor(page, server)
+    style = page.eval_on_selector(
+        "#palette",
+        "e => { const s = getComputedStyle(e);"
+        " return {width: s.scrollbarWidth, colour: s.scrollbarColor}; }",
+    )
+    assert style["width"] == "thin"
+    assert style["colour"] != "auto"

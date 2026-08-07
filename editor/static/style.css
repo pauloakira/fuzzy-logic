@@ -40,6 +40,28 @@
 
 * { box-sizing: border-box; }
 
+/* Scrollbars, from the same tokens as everything else.
+   The default is an operating-system artifact — a wide bright track that sits
+   inside a dark panel looking like it belongs to another application. Two
+   mechanisms because no single one is supported everywhere: the standard
+   properties, and the WebKit pseudo-elements for the finer control. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+  /* Inset by a transparent border so the thumb reads as a slim pill rather than
+     a bar wedged against the panel edge. */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 body {
   margin: 0;
   background: var(--well);
