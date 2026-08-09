@@ -879,7 +879,8 @@ header .spacer { flex: 1 1 auto; }
    A MATLAB figure tells you the value under the pointer. Reading a number off a
    curve by eye is the thing a static plot cannot do. */
 
-#plot { cursor: crosshair; }
+#plot, #bode, #pzmap, #nyquist, #locus { cursor: crosshair; }
+.cursor-ring { fill: none; stroke-width: 2; }
 .cursor-catcher { fill: transparent; pointer-events: all; }
 .cursor { pointer-events: none; }
 .cursor-rule { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }

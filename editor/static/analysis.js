@@ -152,8 +152,10 @@ export function renderBode(root, systems, size) {
   const [magLo, magHi] = range("mag_db");
   const [phLo, phHi] = range("phase_deg");
 
+  const built = [];
   const panel = (top, lo, hi, key, unit) => {
     const py = (v) => top + panelH - ((v - lo) / (hi - lo || 1)) * panelH;
+    built.push({ top, height: panelH, key, py });
 
     // frame
     root.appendChild(svg("line", { x1: PAD.left, y1: top, x2: PAD.left, y2: top + panelH, class: "axis" }));
@@ -197,6 +199,8 @@ export function renderBode(root, systems, size) {
 
   panel(magTop, magLo, magHi, "mag_db", "magnitude [dB]");
   panel(phaseTop, phLo, phHi, "phase_deg", "phase [deg]");
+  catcher(root, PAD.left, magTop, plotW, phaseTop + panelH - magTop);
+  attachBodeCursor(root, channels, { px, size, panels: built });
 
   root.appendChild(svg("text", {
     x: PAD.left + plotW / 2, y: size.height - 4, class: "tick", "text-anchor": "middle",
@@ -306,7 +310,30 @@ export function renderPoleZero(root, systems, size) {
     }
   }
   legend(root, entries, PAD.left + 6, PAD.top + 8);
+
+  const marks = [];
+  for (const g of poleSets) {
+    for (const [re, im] of g.poles) {
+      marks.push({ re, im, label: `${g.name} pole`, colour: "var(--fg)",
+                   rows: damping(re, im) });
+    }
+  }
+  for (const c of channels) {
+    for (const [re, im] of c.zeros || []) {
+      marks.push({ re, im, label: `${c.label} zero`, colour: c.colour });
+    }
+  }
+  catcher(root, PAD.left, PAD.top, w, h);
+  attachPointCursor(root, marks, { X, Y, size }, "pzmap-cursor");
   return poleSets.length;
+}
+
+/** A complex pole's natural frequency and damping ratio, which is what a reader
+ *  is actually after when they hover one. */
+function damping(re, im) {
+  const wn = Math.hypot(re, im);
+  if (!wn) return [];
+  return [[`\u03c9n ${nice(wn)} rad/s   \u03b6 ${nice(-re / wn)}`, null]];
 }
 
 // ---- Nyquist and root locus ------------------------------------------------
@@ -422,6 +449,20 @@ export function renderNyquist(root, loop, size) {
     { colour: colourFor(0), label: `L(j\u03c9) @ ${loop.loop_break}` },
     { colour: colourFor(1), label: "\u03c9 < 0 (mirror)" },
   ], 52, 22);
+
+  // The frequency is the number a Nyquist plot is read for: *where* the curve
+  // passes near -1 matters as much as that it does.
+  const omega = loop.omega || [];
+  const marks = pts.map(([re, im], i) => ({
+    re, im, label: "L(j\u03c9)", colour: colourFor(0),
+    rows: omega[i] === undefined
+      ? [] : [[`\u03c9 = ${nice(omega[i])} rad/s`, null],
+              [`|L| ${nice(Math.hypot(re, im))}   \u2220 ${
+                 nice(Math.atan2(im, re) * 180 / Math.PI)}\u00b0`, null]],
+  }));
+  marks.push({ re: -1, im: 0, label: "critical point", colour: "var(--bad)" });
+  catcher(root, 44, 14, size.width - 58, size.height - 44);
+  attachPointCursor(root, marks, { X, Y, size }, "nyquist-cursor");
   return pts.length;
 }
 
@@ -473,5 +514,164 @@ export function renderRootLocus(root, loop, size) {
     { colour: "var(--muted)", label: "\u00d7 k = 0 (open loop)", marker: "pole" },
     { colour: "var(--muted)", label: `\u25a1 k = 1 (as built)` },
   ], 52, 22);
+
+  // The gain is the whole point of a root locus: "what k puts a pole there".
+  const marks = [];
+  branches.forEach((branch, j) => branch.forEach(([re, im], i) => {
+    if (!Number.isFinite(re)) return;
+    marks.push({
+      re, im, label: `branch ${j + 1}`, colour: colourFor(j),
+      rows: [[`k = ${nice(gains[i])}`, null], ...damping(re, im)],
+    });
+  }));
+  catcher(root, 44, 14, size.width - 58, size.height - 44);
+  attachPointCursor(root, marks, { X, Y, size }, "locus-cursor");
   return branches.length;
+}
+
+
+// ---- cursors ---------------------------------------------------------------
+//
+// Reading a number off a curve by eye is the thing a static chart cannot do, so
+// every chart here gets a cursor. Two shapes, because the charts are two shapes:
+// the Bode plot is indexed by one x (a frequency, shared by every channel),
+// while the complex-plane charts are scatters where the question is "what is
+// *that* point".
+
+/** A readout plate that keeps itself inside `width`. */
+function readout(root) {
+  const box = svg("g", { class: "cursor-readout" });
+  const plate = svg("rect", { rx: 3, class: "cursor-plate" });
+  const label = svg("text", { class: "cursor-label" });
+  box.append(plate, label);
+  root.appendChild(box);
+  return (rows, x, y, width) => {
+    label.replaceChildren();
+    rows.forEach(([text, colour], i) => {
+      const line = svg("tspan", { x: 0, dy: i ? 12 : 0 }, text);
+      if (colour) line.setAttribute("fill", colour);
+      label.appendChild(line);
+    });
+    const w = 7.2 * Math.max(...rows.map(([t]) => t.length)) + 14;
+    box.setAttribute("transform",
+      `translate(${x + 10 + w > width ? x - 10 - w : x + 10} ${y})`);
+    plate.setAttribute("x", -6);
+    plate.setAttribute("y", -11);
+    plate.setAttribute("width", w);
+    plate.setAttribute("height", rows.length * 12 + 7);
+  };
+}
+
+/** Transparent hit area: an <svg> only hit-tests where something is painted. */
+function catcher(root, x, y, width, height) {
+  root.appendChild(svg("rect", {
+    x, y, width: Math.max(0, width), height: Math.max(0, height),
+    class: "cursor-catcher",
+  }));
+}
+
+function svgX(root, event) {
+  const rect = root.getBoundingClientRect();
+  const box = root.viewBox.baseVal;
+  return {
+    x: (event.clientX - rect.left) * (box.width / rect.width),
+    y: (event.clientY - rect.top) * (box.height / rect.height),
+  };
+}
+
+/**
+ * The Bode cursor: one frequency, read across every channel in both panels.
+ * Snapped to a grid point rather than interpolated off the pixel position.
+ */
+function attachBodeCursor(root, channels, geom) {
+  const { px, size, panels } = geom;
+  const layer = svg("g", { class: "cursor", "data-testid": "bode-cursor" });
+  layer.setAttribute("visibility", "hidden");
+  const rules = panels.map((p) =>
+    layer.appendChild(svg("line", { class: "cursor-rule", y1: p.top,
+                                    y2: p.top + p.height })));
+  const dots = panels.flatMap((p) => channels.map((c) =>
+    layer.appendChild(svg("circle", { r: 3, class: "cursor-dot", fill: c.colour }))));
+  root.appendChild(layer);
+  const show = readout(layer);
+
+  // Per channel, against its own grid. The charts share a log-frequency *axis*,
+  // not a sampling: the opened loop is computed on 2000 points and the blocks on
+  // 400, so one index into all of them runs off the end of the shorter arrays.
+  const nearest = (w, x) => {
+    let lo = 0, hi = w.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (px(w[mid]) < x) lo = mid; else hi = mid;
+    }
+    return Math.abs(px(w[lo]) - x) <= Math.abs(px(w[hi]) - x) ? lo : hi;
+  };
+
+  root.addEventListener("pointerleave", () => layer.setAttribute("visibility", "hidden"));
+  root.addEventListener("pointermove", (event) => {
+    const { x } = svgX(root, event);
+    const index = channels.map((c) => nearest(c.omega, x));
+    const cx = px(channels[0].omega[index[0]]);
+    layer.setAttribute("visibility", "visible");
+    layer.dataset.omega = String(channels[0].omega[index[0]]);
+    rules.forEach((r) => { r.setAttribute("x1", cx); r.setAttribute("x2", cx); });
+
+    const rows = [[`\u03c9 = ${nice(channels[0].omega[index[0]])} rad/s`, null]];
+    panels.forEach((p, pi) => channels.forEach((c, ci) => {
+      const v = c[p.key][index[ci]];
+      const dot = dots[pi * channels.length + ci];
+      if (Number.isFinite(v)) {
+        dot.setAttribute("visibility", "visible");
+        dot.setAttribute("cx", px(c.omega[index[ci]]));
+        dot.setAttribute("cy", p.py(v));
+      } else {
+        dot.setAttribute("visibility", "hidden");
+      }
+      if (!pi) {
+        rows.push([`${c.label}  ${nice(c.mag_db[index[ci]])} dB  ` +
+                   `${nice(c.phase_deg[index[ci]])}\u00b0`, c.colour]);
+      }
+    }));
+    show(rows, cx, panels[0].top + 10, size.width);
+  });
+}
+
+/**
+ * The complex-plane cursor: highlight the nearest drawn point and say what it
+ * is. `points` carry their own extra rows — a frequency on a Nyquist locus, a
+ * gain on a root locus — since that is the number the chart exists to give.
+ */
+function attachPointCursor(root, points, geom, testid) {
+  if (!points.length) return;
+  const { X, Y, size } = geom;
+  const layer = svg("g", { class: "cursor", "data-testid": testid });
+  layer.setAttribute("visibility", "hidden");
+  const ring = layer.appendChild(svg("circle", { r: 6, class: "cursor-ring" }));
+  root.appendChild(layer);
+  const show = readout(layer);
+
+  const screen = points.map((p) => ({ ...p, sx: X(p.re), sy: Y(p.im) }));
+  root.addEventListener("pointerleave", () => layer.setAttribute("visibility", "hidden"));
+  root.addEventListener("pointermove", (event) => {
+    const { x, y } = svgX(root, event);
+    let best = null, bestD = Infinity;
+    for (const p of screen) {
+      const d = (p.sx - x) ** 2 + (p.sy - y) ** 2;
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    // Only latch on when the pointer is genuinely near something; a cursor that
+    // snaps to a point half a chart away is noise.
+    if (!best || bestD > 40 ** 2) {
+      return layer.setAttribute("visibility", "hidden");
+    }
+    layer.setAttribute("visibility", "visible");
+    layer.dataset.point = best.label;
+    ring.setAttribute("cx", best.sx);
+    ring.setAttribute("cy", best.sy);
+    ring.setAttribute("stroke", best.colour || "var(--fg)");
+    show([[best.label, best.colour || null],
+          [`${nice(best.re)} ${best.im < 0 ? "\u2212" : "+"} ${nice(Math.abs(best.im))}j`,
+           null],
+          ...(best.rows || [])], best.sx, best.sy, size.width);
+  });
 }

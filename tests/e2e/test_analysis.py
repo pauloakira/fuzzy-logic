@@ -501,3 +501,80 @@ def test_the_cursor_hides_when_the_pointer_leaves(page: Page, server: str):
     expect(page.get_by_test_id("plot-cursor")).to_have_attribute(
         "visibility", "hidden"
     )
+
+
+# ----- cursors on the analysis charts ---------------------------------------------
+
+
+def hover(page: Page, testid: str, fx: float, fy: float) -> None:
+    """Point at a fraction of a chart's box, scrolled into view first."""
+    page.get_by_test_id(testid).scroll_into_view_if_needed()
+    box = page.get_by_test_id(testid).bounding_box()
+    page.mouse.move(box["x"] + box["width"] * fx, box["y"] + box["height"] * fy)
+
+
+def test_the_bode_plot_has_a_frequency_cursor(page: Page, server: str):
+    """One frequency, read across every channel in both panels."""
+    open_diagram(page, server, EX2)
+    run(page)
+    cursor = page.get_by_test_id("bode-cursor")
+    assert cursor.get_attribute("visibility") == "hidden"
+
+    hover(page, "bode", 0.5, 0.3)
+    expect(cursor).to_have_attribute("visibility", "visible")
+    text = cursor.locator("text").text_content()
+    assert "ω" in text and "dB" in text and "°" in text
+    assert float(cursor.get_attribute("data-omega")) > 0
+
+
+def test_the_pole_zero_cursor_names_the_marker_and_its_damping(
+    page: Page, server: str
+):
+    """Hovering a pole should answer the question a pole is looked at for."""
+    open_diagram(page, server, EX2)
+    run(page)
+    marker = page.locator("#pzmap [data-pole='plant']").first
+    marker.scroll_into_view_if_needed()          # page coords vs viewport coords
+    pole = marker.bounding_box()
+    page.mouse.move(pole["x"] + pole["width"] / 2, pole["y"] + pole["height"] / 2)
+
+    cursor = page.get_by_test_id("pzmap-cursor")
+    expect(cursor).to_have_attribute("visibility", "visible")
+    assert "pole" in cursor.get_attribute("data-point")
+    assert "ζ" in cursor.locator("text").text_content()
+
+
+def test_the_nyquist_cursor_reports_the_frequency(page: Page, server: str):
+    """Where the curve passes near -1 matters as much as that it does."""
+    open_diagram(page, server, EX2)
+    run(page)
+    hover(page, "nyquist", 0.5, 0.5)
+    cursor = page.get_by_test_id("nyquist-cursor")
+    expect(cursor).to_have_attribute("visibility", "visible")
+    assert "ω" in cursor.locator("text").text_content()
+
+
+def test_the_root_locus_cursor_reports_the_gain(page: Page, server: str):
+    """"What k puts a pole there" is the whole reason to draw a root locus."""
+    open_diagram(page, server, EX2)
+    run(page)
+    marker = page.locator("#locus [data-locus-start]").first
+    marker.scroll_into_view_if_needed()
+    start = marker.bounding_box()
+    page.mouse.move(start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
+
+    cursor = page.get_by_test_id("locus-cursor")
+    expect(cursor).to_have_attribute("visibility", "visible")
+    assert "k =" in cursor.locator("text").text_content()
+
+
+def test_a_complex_plane_cursor_ignores_a_pointer_far_from_any_point(
+    page: Page, server: str
+):
+    """A cursor that snaps to a point half a chart away is noise."""
+    open_diagram(page, server, EX2)
+    run(page)
+    hover(page, "pzmap", 0.06, 0.94)
+    expect(page.get_by_test_id("pzmap-cursor")).to_have_attribute(
+        "visibility", "hidden"
+    )
