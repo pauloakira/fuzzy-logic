@@ -12,7 +12,9 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
+EX1 = "exercises/exercicio1_motor_control/diagram.json"
 EX2 = "exercises/exercicio2_sdof_vibration_control/diagram.json"
+OGATA = "exercises/ogata_example_8_1/diagram.json"
 
 
 @pytest.fixture(autouse=True)
@@ -58,10 +60,16 @@ def test_required_parameters_are_marked(page: Page, server: str):
     expect(params).to_contain_text("required")
 
 
-def test_both_committed_diagrams_are_offered(page: Page, server: str):
+def test_every_committed_diagram_is_offered(page: Page, server: str):
+    """Named rather than counted: the list grows as exercises are added, and a
+    hardcoded count turns that into a failure instead of a fact."""
     page.goto(server)
-    buttons = page.get_by_test_id("diagrams").locator("button")
-    expect(buttons).to_have_count(2)
+    expect(page.get_by_test_id("status")).to_have_attribute("data-ready", "true")
+    offered = page.eval_on_selector_all(
+        "[data-diagram-path]", "els => els.map(e => e.dataset.diagramPath)"
+    )
+    for path in (EX1, EX2, OGATA):
+        assert path in offered, path
     expect(page.locator(f"[data-diagram-path='{EX2}']")).to_be_visible()
 
 

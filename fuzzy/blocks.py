@@ -421,11 +421,25 @@ class FISBlock(Block):
 
 
 class PIDBlock(Block):
-    """Sampled PID with derivative-on-output and back-calculation anti-windup.
+    """Sampled PID with back-calculation anti-windup.
 
-    `u = kp*e + I - kd*x_dot`, `e = setpoint - x`, saturated to `[lo, hi]`;
-    the integrator is corrected toward feasibility with time constant `Tt`.
+    `u = kp*e + I + kd*de/dt`, `e = setpoint - x`, saturated to `[lo, hi]`; the
+    integrator is corrected toward feasibility with time constant `Tt`.
     Saturation is internal so the anti-windup path needs no feedback wire.
+
+    `derivative_on` selects which signal the derivative term acts on, and the
+    two are *different controllers* — same poles, different closed-loop zeros,
+    materially different overshoot:
+
+    - `"output"` (default) gives `u = kp*e + I - kd*x_dot`. With a constant
+      setpoint `de/dt = -dx/dt`, so this is the same thing away from setpoint
+      changes, and at a step it avoids the derivative kick that differentiating
+      a discontinuity produces. This is what a practical loop uses.
+    - `"error"` gives the textbook ideal `Gc(s) = Kp(1 + 1/(Ti s) + Td s)`,
+      which puts a double zero in the forward path. Every Ziegler-Nichols
+      example in the literature is tuned for this form, so it is the one to use
+      when reproducing a published design: Ogata's Example 8-1 overshoots 62%
+      on `"error"` and 76% on `"output"` from the very same gains.
     """
 
     category = "Controllers"
@@ -445,24 +459,43 @@ class PIDBlock(Block):
         Tt: float = 1.0,
         setpoint: float = 0.0,
         dt: float = 0.0,
+        derivative_on: str = "output",
         name: str | None = None,
     ) -> None:
         super().__init__(name)
+        if derivative_on not in ("output", "error"):
+            raise ValueError("`derivative_on` must be 'output' or 'error'")
         self.kp, self.ki, self.kd = float(kp), float(ki), float(kd)
         self.lo, self.hi = float(lo), float(hi)
         self.Tt = float(Tt)
         self.setpoint = float(setpoint)
         self.dt = float(dt)
+        self.derivative_on = derivative_on
         self._integral = 0.0
         self._held = 0.0
+        self._e_prev = 0.0
 
     def reset(self) -> None:
         self._integral = 0.0
         self._held = 0.0
+        self._e_prev = 0.0
 
     def update(self, t: float, u: Inputs) -> None:
         e = self.setpoint - float(u["x"])
-        unsat = self.kp * e + self._integral - self.kd * float(u["x_dot"])
+        if self.derivative_on == "error" and self.dt > 0.0:
+            # `de/dt` across samples. At a reference step this is one very large
+            # sample — the derivative kick — and that kick is not an artifact to
+            # suppress here: it is the impulse the ideal `Td s` term puts into
+            # the plant, and it is why the textbook step response looks as it
+            # does. Suppressing it is what `"output"` is for.
+            rate = (e - self._e_prev) / self.dt
+        else:
+            # A constant setpoint has `de/dt = -dx/dt`, so away from setpoint
+            # changes this is the same derivative, taken off a signal that has
+            # no discontinuity in it.
+            rate = -float(u["x_dot"])
+        self._e_prev = e
+        unsat = self.kp * e + self._integral + self.kd * rate
         sat = float(np.clip(unsat, self.lo, self.hi))
         self._held = sat
         if self.dt > 0.0:

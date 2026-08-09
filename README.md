@@ -21,7 +21,7 @@ fuzzy-logic/
 │   └── spec.py                  # declarative diagram specs (JSON) + registry
 │
 ├── examples/                    # standalone tutorial / demo scripts
-├── exercises/                   # academic exercises (PCS5708 etc.)
+├── exercises/                   # academic exercises (PCS5708) and validation cases
 ├── tests/unit/                  # pytest unit tests
 ├── docs/                        # research notes, design decisions, backlog
 │   ├── research-fuzzy-logic.md
